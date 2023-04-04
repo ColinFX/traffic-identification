@@ -63,7 +63,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     json_path = os.path.join(args.model_dir, "params.json")
     if not os.path.isfile(json_path):
-        raise("Failed to load hyperparameters: no json file found at {}.".format(json_path))
+        raise ("Failed to load hyperparameters: no json file found at {}.".format(json_path))
     params = utils.HyperParams(json_path)
 
     # bypass cuda index hyperparameter if specified cuda device is not available
@@ -82,13 +82,13 @@ if __name__ == "__main__":
     # load data
     test_data_loader = TCDataLoader("test", args.data_dir, params)
     params.test_size = len(test_data_loader.dataset)
-    num_steps = (params.test_size+1) // params.batch_size
+    num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
     cnn = models.CNN.CNN()
     if params.cuda_index:
         cnn.cuda(device=torch.device(params.cuda_index))
-    utils.load_checkpoint(os.path.join(args.model_dir, args.restore_file+".pth.tar"), cnn)
+    utils.load_checkpoint(os.path.join(args.model_dir, args.restore_file + ".pth.tar"), cnn)
     test_metrics = evaluate(
         model=cnn,
         loss_fn=models.CNN.loss_fn,
@@ -99,4 +99,4 @@ if __name__ == "__main__":
 
     # save metrics evaluation result on the restore_file
     save_path = os.path.join(args.model_dir, "metrics_test_{}.json".format(args.restore_file))
-    utils.save_metrics_to_json(test_metrics, save_path)
+    utils.save_metrics(test_metrics, save_path)

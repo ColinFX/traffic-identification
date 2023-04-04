@@ -138,11 +138,11 @@ def train(
             logging.info("- Found new best accuracy")
             best_val_acc = val_acc
             best_json_path = os.path.join(model_dir, "metrics_val_best_weights.json")
-            utils.save_metrics_to_json(val_metrics, best_json_path)
+            utils.save_metrics(val_metrics, best_json_path)
 
         # overwrite last metrics evaluation result
         last_json_path = os.path.join(model_dir, "metric_val_last_weights.json")
-        utils.save_metrics_to_json(val_metrics, last_json_path)
+        utils.save_metrics(val_metrics, last_json_path)
 
     return best_metrics
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     json_path = os.path.join(args.model_dir, "params.json")
     if not os.path.isfile(json_path):
-        raise("Failed to load hyperparameters: no json file found at {}.".format(json_path))
+        raise ("Failed to load hyperparameters: no json file found at {}.".format(json_path))
     params = utils.HyperParams(json_path)
 
     # bypass cuda index hyperparameter if specified cuda device is not available

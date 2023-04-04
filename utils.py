@@ -48,6 +48,7 @@ class RunningAverage(object):
         * add new item by `running_avg.update(2.0)`
         * get current average by `running_avg()`
     """
+
     def __init__(self):
         self.steps: int = 0
         self.total: float = 0
@@ -81,7 +82,7 @@ def set_logger(log_path: str):
         logger.addHandler(stream_handler)
 
 
-def save_metrics_to_json(dictionary: dict[str, float], json_path: str):
+def save_metrics(dictionary: dict[str, float], json_path: str):
     """Save dictionary containing metrics results to json file"""
     with open(json_path, 'w') as file:
         # convert the values to float for json since it doesn't accept np.array, np.float, nor torch.FloatTensor

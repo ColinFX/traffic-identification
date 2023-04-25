@@ -1,8 +1,9 @@
+import os
 import re
 from typing import List
 
 
-class LogFile:
+class ENBLogFile:
     def __init__(self, filename: str):
         self.filename: str = filename
         self.lines: List[str] = []
@@ -18,9 +19,10 @@ class LogFile:
         self.lines = [line for line in self.lines if not line == ""]
         self.segment_lines()
         self.segment_layer_records()
-        self.filter_records()
+        self.filter_downlink_records()
 
     def segment_lines(self) -> None:
+        """Segment `lines` into `layer_records` by layer marks"""
         pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z0-9]+]')
         self.layer_records = []
         current_layer_record: List[str] = []
@@ -35,6 +37,7 @@ class LogFile:
             self.layer_records.append(current_layer_record)
 
     def segment_layer_records(self) -> None:
+        """Segment `layer_records` into `records` according to timestamp"""
         pattern = re.compile(r'(\d{2}:\d{2}:\d{2})\.\d{3}')
         self.records = []
         current_record: List[List[str]] = []
@@ -51,40 +54,57 @@ class LogFile:
                 else:
                     current_record.append(layer_record)
 
-    def filter_records(self) -> None:
+    def filter_downlink_records(self) -> None:
+        """Keep only `layer_records` of downlink data stream in `records`"""
         drb_records: List[List[List[str]]] = []
         for record in self.records:
-            keep_record_flags = [False, False]
+            drb_layer_records: List[List[str]] = []
+            data_flag: bool = False
+            label_flag: bool = False
             for layer_record in record:
-                if "[GTPU] TO" in layer_record[0] and "IP/TCP" in layer_record[0]:
-                    keep_record_flags[0] = True
-                elif "DRB" in layer_record[0] and "D/C=0" in layer_record[0]:
-                    keep_record_flags[1] = True
-            if all(keep_record_flags):
-                drb_records.append(record)
+                if "[GTPU] FROM" in layer_record[0] or "DL" in layer_record[0]:
+                    drb_layer_records.append(layer_record)
+                if "DRB" in layer_record[0] and "D/C=0" in layer_record[0]:
+                    data_flag = True
+                if "[GTPU] FROM" in layer_record[0]:
+                    label_flag = True
+            if drb_layer_records and data_flag and label_flag:
+                drb_records.append(drb_layer_records)
         self.records = drb_records
 
-    def save_layer_records(self, layer: str, filename: str) -> None:
+    def save_layer_records(self, layer: str, filename: str, ignore_empty: bool) -> bool:
+        """Save all `layer_records` of the specific layer"""
+        if ignore_empty and len(self.records) == 0:
+            return False
         with open(filename, 'w') as f:
-            for record in self.records[:100]:  # CONFIG HERE
+            for record in self.records:
                 for layer_record in record:
                     if layer in layer_record[0]:
                         f.write('\n'.join(layer_record))
                         f.write('\n')
                 f.write('\n')
+            return True
 
-    def save_records(self, filename: str) -> None:
-        self.save_layer_records("", filename)
+    def save_records(self, filename: str, ignore_empty: bool) -> bool:
+        """Save all `records`"""
+        return self.save_layer_records("", filename, ignore_empty)
+
+
+def preprocess_batch_ENBLogFile(data_dir: str, ignore_empty: bool):
+    os.makedirs(os.path.join(data_dir, "drb"), exist_ok=True)
+    pattern = re.compile(r"enb-export-\d{8}-\d{6}\.log")
+    for file_name in os.listdir(data_dir):
+        file_path = os.path.join(data_dir, file_name)
+        if os.path.isfile(file_path) and pattern.match(file_name):
+            export_path = os.path.join(data_dir, "drb", file_name)
+            log = ENBLogFile(file_path)
+            saved = log.save_records(export_path, ignore_empty)
+            if saved:
+                print(f"{os.path.getsize(export_path):10} bytes saved to {export_path}")
 
 
 if __name__ == "__main__":
-    log = LogFile("./data/lte/enb-export-20230413-135802.log")
-    print(len(log.lines))
-    print(len(log.layer_records))
-    print(len(log.records))
-    log.save_records("./data/lte/enb-export-20230413-135802-drb.log")
-    log.save_layer_records("PDCP", "./data/lte/enb-export-20230413-135802-pdcp.log")
-    log.save_layer_records("RLC", "./data/lte/enb-export-20230413-135802-rlc.log")
-    log.save_layer_records("MAC", "./data/lte/enb-export-20230413-135802-mac.log")
-    log.save_layer_records("PHY", "./data/lte/enb-export-20230413-135802-phy.log")
-    log.save_layer_records("GTPU", "./data/lte/enb-export-20230413-135802-gtpu.log")
+    preprocess_batch_ENBLogFile(
+        data_dir="./data/lte/enb-export",
+        ignore_empty=True
+    )

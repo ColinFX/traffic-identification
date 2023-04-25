@@ -54,12 +54,13 @@ class LogFile:
     def filter_records(self) -> None:
         drb_records: List[List[List[str]]] = []
         for record in self.records:
-            keep_record = False
+            keep_record_flags = [False, False]
             for layer_record in record:
-                if "DRB" in layer_record[0]:
-                    keep_record = True
-                    break
-            if keep_record:
+                if "[GTPU] TO" in layer_record[0] and "IP/TCP" in layer_record[0]:
+                    keep_record_flags[0] = True
+                elif "DRB" in layer_record[0] and "D/C=0" in layer_record[0]:
+                    keep_record_flags[1] = True
+            if all(keep_record_flags):
                 drb_records.append(record)
         self.records = drb_records
 

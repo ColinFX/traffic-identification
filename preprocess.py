@@ -1,278 +1,202 @@
-import json
-import os
+import abc
+import csv
+import datetime
 import re
-from typing import List, Dict
+import time
+from typing import Dict, List
 
 
-class ENBLogFile:
-    def __init__(self, filename: str):
-        self.filename: str = filename
-        self.lines: List[str] = []
-        self.layer_records: List[List[str]] = []
-        self.records: List[List[List[str]]] = []
-        with open(filename, 'r') as f:
-            self.lines = f.readlines()
-            i = 0
-            while i < len(self.lines) and (self.lines[i].startswith('#') or self.lines[i].startswith('+')):
-                i += 1
-            self.lines = self.lines[i:]
-        self.lines = [line.rstrip('\n') for line in self.lines]
-        self.lines = [line for line in self.lines if not line == ""]
-        self._segment_lines()
-        self._segment_layer_records()
+class GNBRecord:
+    def __init__(self, raw_record: List[str]):
+        self.raw_record = raw_record
+        match = re.match(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s\[([A-Z0-9]+)]', raw_record[0])
+        self.time: datetime.time = datetime.datetime.strptime(match.groups()[0], "%H:%M:%S.%f").time()
+        self.layer: str = match.groups()[1]
+        self.basic_info: Dict[str, str] = self._extract_basic_info()
+        self.short_message: Dict[str, str] = self._extract_short_message()
+        self.long_message: Dict[str, str] = self._extract_long_message()
 
-    def _segment_lines(self) -> None:
-        """Segment `lines` into `layer_records` by layer marks"""
-        pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z0-9]+]')
-        self.layer_records = []
-        current_layer_record: List[str] = []
-        for line in self.lines:
-            if pattern.match(line):
-                if len(current_layer_record) > 0:
-                    self.layer_records.append(current_layer_record)
-                current_layer_record = [line]
-            else:
-                current_layer_record.append(line)
-        if len(current_layer_record) > 0:
-            self.layer_records.append(current_layer_record)
+    @abc.abstractmethod
+    def _extract_basic_info(self) -> Dict[str, str]:
+        return {}
 
-    def _segment_layer_records(self) -> None:
-        """Segment `layer_records` into `records` according to timestamp"""
-        pattern = re.compile(r'(\d{2}:\d{2}:\d{2})\.\d{3}')
-        self.records = []
-        current_record: List[List[str]] = []
-        current_timestamp: str = ''
-        for layer_record in self.layer_records:
-            match = pattern.match(layer_record[0])
-            if match:
-                timestamp = match.group(0)
-                if timestamp != current_timestamp:
-                    if current_record:
-                        self.records.append(current_record)
-                    current_record = [layer_record]
-                    current_timestamp = timestamp
-                else:
-                    current_record.append(layer_record)
-        if current_record:
-            self.records.append(current_record)
+    @abc.abstractmethod
+    def _extract_short_message(self) -> Dict[str, str]:
+        return {}
 
-    def filter_downlink_records(self) -> None:
-        """Keep only `layer_records` of downlink data stream in `records`"""
-        drb_records: List[List[List[str]]] = []
-        for record in self.records:
-            drb_layer_records: List[List[str]] = []
-            data_flag: bool = False
-            label_flag: bool = False
-            for layer_record in record:
-                if "[GTPU] FROM" in layer_record[0] or "DL" in layer_record[0]:
-                    drb_layer_records.append(layer_record)
-                if "DRB" in layer_record[0] and "D/C=0" in layer_record[0]:
-                    data_flag = True
-                if "[GTPU] FROM" in layer_record[0]:
-                    label_flag = True
-            if drb_layer_records and data_flag and label_flag:
-                drb_records.append(drb_layer_records)
-        self.records = drb_records
+    @abc.abstractmethod
+    def _extract_long_message(self) -> Dict[str, str]:
+        return {}
 
-    def save_layer_records(self, layer: str, filename: str, ignore_empty: bool) -> bool:
-        """Save all `layer_records` of the specific layer"""
-        if ignore_empty and len(self.records) == 0:
-            return False
-        with open(filename, 'w') as f:
-            for record in self.records:
-                for layer_record in record:
-                    if layer in layer_record[0]:
-                        f.write('\n'.join(layer_record))
-                        f.write('\n')
-                f.write('\n')
-            return True
 
-    def save_records(self, filename: str, ignore_empty: bool) -> bool:
-        """Save all `records`"""
-        return self.save_layer_records("", filename, ignore_empty)
+class GNBRecordPHY(GNBRecord):
+    def __init__(self, raw_record: List[str]):
+        super().__init__(raw_record)
 
-    @staticmethod
-    def extract_phy(layer_record: List[str]):
-        """
-        Extract information from a PHY `s`
+    def _extract_basic_info(self) -> Dict[str, str]:
+        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+):', self.raw_record[0])
+        keys = ["dir", "ue_id", "cell_id", "rnti", "sfn", "channel"]
+        return dict(zip(keys, match.groups()))
 
-        PHY Log file format:
-            time layer dir_ ue_id cell RNTI frame.subframe channel:short_content
-            long_content
-        """
-        s = '\n'.join(layer_record)
-        match = re.match(r'(\S+) \[(\S+)] (\S+) (\S+) (\S+) (\S+)\s+(\S+)', s)
-        if not match:
-            return None
-        time, layer, dir_, ue_id, cell, rnti, frame_subframe = match.groups()
-        frame, subframe = frame_subframe.split('.')
+    def _extract_short_message(self) -> Dict[str, str]:
+        short_message_str: str = self.raw_record[0].split(':', 1)[1]
+        if "CW1" in short_message_str:
+            short_message_str = short_message_str.split("CW1", 1)[0]
+        return dict(re.findall(r"(\S+)=(\S+)", short_message_str))
 
-        match = re.search(r'(\S+): (.+)', s)
-        if not match:
-            return None
-        channel, short_content = match.groups()
-        short_content_list = re.findall(r"(\S+=\S+)", short_content)
-        short_content_dict: Dict[str, str] = {}
-        for item in short_content_list:
-            key, value = item.split('=')
-            short_content_dict[key] = value
+    def _extract_long_message(self) -> Dict[str, str]:
+        long_message_str: str = " ".join(self.raw_record[1:])
+        return dict(re.findall(r"(\S+)=(\S+)", long_message_str))
 
-        long_content_list = re.findall(r'\n(\S+=\S+)', s)
-        long_content_dict: Dict[str, str] = {}
-        for item in long_content_list:
-            key, value = item.split('=')
-            long_content_dict[key] = value
 
-        return {
-            'time': time,
-            'layer': layer,
-            'dir_': dir_,
-            'ue_id': ue_id,
-            'cell': cell,
-            'rnti': rnti,
-            'frame': frame,
-            'subframe': subframe,
-            'channel': channel,
-            'short_content': short_content_dict,
-            'long_content': long_content_dict
-        }
+class GNBRecordRLC(GNBRecord):
+    def __init__(self, raw_record: List[str]):
+        super().__init__(raw_record)
 
-    @staticmethod
-    def extract_rlc(layer_record: List[str]):
-        """
-        Extract information from an RLC `layer_record`
+    def _extract_basic_info(self) -> Dict[str, str]:
+        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)', self.raw_record[0])
+        keys = ["dir", "ue_id", "bearer"]
+        return dict(zip(keys, match.groups()))
 
-        RLC Log file format:
-            time layer dir ue_id identifier short_content
-        """
-        s = '\n'.join(layer_record)
-        match = re.match(r'(\S+) \[(\S+)] (\S+) (\S+) (\S+)', s)
-        if not match:
-            return None
-        time, layer, dir_, ue_id, identifier = match.groups()
+    def _extract_short_message(self) -> Dict[str, str]:
+        return dict(re.findall(r"(\S+)=(\S+)", self.raw_record[0]))
 
-        short_content_list = re.findall(r'(\S+=\S+)', s)
-        short_content_dict: Dict[str, str] = {}
-        for item in short_content_list:
-            key, value = item.split('=')
-            short_content_dict[key] = value
+    def _extract_long_message(self) -> Dict[str, str]:
+        return {}
 
-        return {
-            'time': time,
-            'layer': layer,
-            'dir': dir_,
-            'ue_id': ue_id,
-            'identifier': identifier,
-            'short_content': short_content_dict
-        }
 
-    @staticmethod
-    def extract_mac(layer_record: List[str]):
-        """
-        Extract information from an MAC `layer_record`
+class GNBRecordGTPU(GNBRecord):
+    def __init__(self, raw_record: List[str]):
+        super().__init__(raw_record)
 
-        MAC Log file format:
-            time layer dir ue_id cell_id short_content
-        """
-        s = '\n'.join(layer_record)
-        match = re.match(r'(\S+) \[(\S+)] (\S+) (\S+) (\S+)', s)
-        if not match:
-            return None
-        time, layer, dir_, ue_id, cell_id = match.groups()
+    def _extract_basic_info(self) -> Dict[str, str]:
+        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', self.raw_record[0])
+        keys = ["dir", "ip", "port"]
+        return dict(zip(keys, match.groups()))
 
-        short_content_list = re.findall(r'(\S+[=:]\S+)', s)
-        short_content_dict: Dict[str, str] = {}
-        for item in short_content_list:
-            key, value = item.split('=|:')
-            short_content_dict[key] = value
-
-        return {
-            'time': time,
-            'layer': layer,
-            'dir': dir_,
-            'ue_id': ue_id,
-            'cell_id': cell_id,
-            'short_content': short_content_dict
-        }
-
-    @staticmethod
-    def extract_gtpu(layer_record: List[str]):
-        """
-        Extract information from a GTPU `layer_record`
-
-        GTPU Log file format:
-            time layer dir ip short_content
-            long_content
-        """
-        s = '\n'.join(layer_record)
-        match = re.match(r'(\S+) \[(\S+)] (\S+) (\S+):(\d+) (.+)', s)
-        if not match:
-            return None
-        time, layer, dir_, ip, port, short_content = match.groups()
-
-        short_content_list = re.findall(r"(\S+=\S+)", short_content)
-        short_content_dict: Dict[str, str] = {}
-        for item in short_content_list:
-            key, value = item.split('=')
-            short_content_dict[key] = value
-
-        long_content_list = re.findall(r'\n\s+(\S+):(.+)', s)
-        long_content_dict: Dict[str, str] = {}
-        for item in long_content_list:
-            key, value = item
-            long_content_dict[key] = value
-
-        expeditor_ip, expeditor_port, receiver_ip, receiver_port = None, None, None, None
-        match = re.search(
-            r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+) > (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)',
-            short_content
+    def _extract_short_message(self) -> Dict[str, str]:
+        short_message: Dict[str, str] = dict(re.findall(r"(\S+)=(\S+)", self.raw_record[0]))
+        match = re.match(
+            r'.* (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)\s+>\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)',
+            self.raw_record[0]
         )
         if match:
-            expeditor_ip, expeditor_port, receiver_ip, receiver_port = match.groups()
+            keys = ["source_ip", "source_port", "destination_ip", "destination_port"]
+            short_message.update(dict(zip(keys, match.groups())))
+        return short_message
 
-        return {
-            'time': time,
-            'layer': layer,
-            'dir_': dir_,
-            'ip': ip,
-            'port': port,
-            'expeditor_ip': expeditor_ip,
-            'expeditor_port': expeditor_port,
-            'receiver_ip': receiver_ip,
-            'receiver_port': receiver_port,
-            'short_content': short_content_dict,
-            'long_content': long_content_dict
-        }
+    def _extract_long_message(self) -> Dict[str, str]:
+        long_message: Dict[str, str] = {}
+        for line in self.raw_record[1:]:
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                long_message[key] = value
+        return long_message
 
 
-def preprocess_batch_enb_logfile(data_dir: str, ignore_empty: bool):
-    os.makedirs(os.path.join(data_dir, "drb"), exist_ok=True)
-    pattern = re.compile(r"enb-export-\d{8}-\d{6}\.log")
-    for file_name in os.listdir(data_dir):
-        file_path = os.path.join(data_dir, file_name)
-        if os.path.isfile(file_path) and pattern.match(file_name):
-            export_path = os.path.join(data_dir, "drb", file_name)
-            log = ENBLogFile(file_path)
-            log.filter_downlink_records()
-            saved = log.save_records(export_path, ignore_empty)
-            if saved:
-                print(f"{os.path.getsize(export_path):10} bytes saved to {export_path}")
+class GNBLogFile:
+    def __init__(self, read_path: str, save_path: str):
+        self.filename = read_path
+        with open(read_path, 'r') as f:
+            self.lines: List[str] = f.readlines()
+        self.date: datetime.date = self._process_header()
+        self.raw_records: List[List[str]] = self._group_lines()
+        self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
+        self._filter_phy_drb_record()
+        self._export_csv(save_path)
+
+    def _process_header(self) -> datetime.date:
+        """Remove header marked by `#` and get date"""
+        i = 0
+        while i < len(self.lines) and (self.lines[i].startswith('#')):
+            i += 1
+        date_str: str = re.search(r'\d{4}-\d{2}-\d{2}', self.lines[i-1]).group()
+        date: datetime.date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        self.lines = self.lines[i:]
+        return date
+
+    def _group_lines(self) -> List[List[str]]:
+        """Group lines into blocks as raw_records with plain text"""
+        raw_records: List[List[str]] = []
+        pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z0-9]+]')
+        current_record: List[str] = []
+        for line in self.lines:
+            if pattern.match(line):
+                if current_record:
+                    raw_records.append(current_record)
+                current_record = [line]
+            else:
+                current_record.append(line)
+        if current_record:
+            raw_records.append(current_record)
+        return raw_records
+
+    @staticmethod
+    def _reformat_record(raw_record: List[str]) -> GNBRecord:
+        """Convert raw_record with plain text into GNBRecord instance"""
+        if "[PHY]" in raw_record[0]:
+            return GNBRecordPHY(raw_record)
+        elif "[RLC]" in raw_record[0]:
+            return GNBRecordRLC(raw_record)
+        elif "[GTPU]" in raw_record[0]:
+            return GNBRecordGTPU(raw_record)
+        else:
+            return GNBRecord(raw_record)
+
+    def _filter_phy_drb_record(self):
+        """Keep only data records of physical layer"""
+        filtered_records: List[GNBRecord] = []
+        drb_flag: bool = False
+        for record in self.records:
+            if record.layer == "RLC":
+                if "DRB" in record.basic_info["bearer"]:
+                    drb_flag = True
+                elif "SRB" in record.basic_info["bearer"]:
+                    drb_flag = False
+                else:
+                    print("ERROR")
+                    print(record.time, record.layer, record.basic_info)
+            elif record.layer == "PHY":
+                if drb_flag:
+                    filtered_records.append(record)
+            else:
+                pass
+        self.records = filtered_records
+
+    # def _filter_rlc_record(self):
+    #     """Keep only records of RLC layer, config ONLY"""
+    #     self.records = [record for record in self.records if record.layer == "RLC"]
+
+    def _export_csv(self, save_path: str):
+        """Save records to csv file"""
+        with open(save_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
+            keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
+            keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
+            writer.writerow(["time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
+            for record in self.records:
+                row = [record.time, record.layer]
+                for key in keys_basic_info:
+                    row.append(record.basic_info.get(key, ""))
+                for key in keys_short_message:
+                    row.append(record.short_message.get(key, ""))
+                for key in keys_long_message:
+                    row.append(record.long_message.get(key, ""))
+                writer.writerow(row)
+
+    # def count_layers(self) -> Dict[str, int]:
+    #     """Count number of each kind of layer in the record"""
+    #     count: Dict[str, int] = {}
+    #     for record in self.records:
+    #         if record.layer in count.keys():
+    #             count[record.layer] += 1
+    #         else:
+    #             count[record.layer] = 1
+    #     return count
 
 
 if __name__ == "__main__":
-    # preprocess_batch_enb_logfile(
-    #     data_dir="./data/lte/enb-export",
-    #     ignore_empty=True
-    # )
-
-    log = ENBLogFile("./data/lte/enb-export-test/enb-export-00000000-000000.log")
-    for record in log.records:
-        for layer_record in record:
-            if "GTPU" in layer_record[0]:
-                print(">>>>")
-                print(layer_record)
-                print(json.dumps(ENBLogFile.extract_gtpu(layer_record), indent=4))
-
-    # log = ENBLogFile("./data/lte/enb-export-test/enb-export-00000000-000001.log")
-    # log.save_layer_records(layer="GTPU", filename="./data/lte/enb-export-test/enb-export-00000000-000001-gtpu.log",
-    #                        ignore_empty=False)
+    start = time.time()
+    log = GNBLogFile(read_path="data/NR/1st-example/gnb0.log", save_path="data/NR/1st-example/export.csv")
+    print("Preprocessing finished in {:.2f} seconds".format(time.time() - start))

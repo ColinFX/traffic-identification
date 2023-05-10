@@ -3,11 +3,12 @@ import csv
 import datetime
 import re
 import time
-from typing import Dict, List, Match, Pattern
+from typing import Dict, List, Match, Pattern, Tuple
 
 
 class GNBRecord:
     def __init__(self, raw_record: List[str]):
+        self.label: str = ""
         self.raw_record = raw_record
         match: Match = re.match(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s\[([A-Z0-9]+)]', raw_record[0])
         self.time: datetime.time = datetime.datetime.strptime(match.groups()[0], "%H:%M:%S.%f").time()
@@ -98,7 +99,12 @@ class GNBRecordGTPU(GNBRecord):
 
 
 class GNBLogFile:
-    def __init__(self, read_path: str, save_path: str):
+    def __init__(
+            self,
+            read_path: str,
+            save_path: str,
+            timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]
+    ):
         """Read log from `read_path` and save preprocessed physical layer data records to `save_path` in csv format"""
         self.filename = read_path
         with open(read_path, 'r') as f:
@@ -108,6 +114,7 @@ class GNBLogFile:
         self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
         self._filter_phy_drb_records()
         self._sort_records()
+        self._add_label(timetable)
         self._export_csv(save_path)
 
     def _process_header(self) -> datetime.date:
@@ -188,6 +195,19 @@ class GNBLogFile:
             records.extend(period)
         self.records = records
 
+    @staticmethod
+    def _get_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
+        """Get ground truth label from given `timetable` for one `record`"""
+        for _range, label in timetable:
+            if _range[0] < record.time < _range[1]:
+                return label
+        return ""
+
+    def _add_label(self, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]):
+        """Add ground truth label for all `records` by given `timetable`"""
+        for record in self.records:
+            record.label = self._get_label(record, timetable)
+
     def _export_csv(self, save_path: str):
         """Save physical layer records to csv file"""
         with open(save_path, 'w', newline='') as f:
@@ -195,19 +215,27 @@ class GNBLogFile:
             keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
             keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
             keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
-            writer.writerow(["time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
+            writer.writerow(["label", "time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
             for record in self.records:
-                row = [record.time, record.layer]
-                for key in keys_basic_info:
-                    row.append(record.basic_info.get(key, ""))
-                for key in keys_short_message:
-                    row.append(record.short_message.get(key, ""))
-                for key in keys_long_message:
-                    row.append(record.long_message.get(key, ""))
-                writer.writerow(row)
+                if record.label:
+                    row = [record.label, record.time, record.layer]
+                    for key in keys_basic_info:
+                        row.append(record.basic_info.get(key, ""))
+                    for key in keys_short_message:
+                        row.append(record.short_message.get(key, ""))
+                    for key in keys_long_message:
+                        row.append(record.long_message.get(key, ""))
+                    writer.writerow(row)
 
 
 if __name__ == "__main__":
     start = time.time()
-    log = GNBLogFile(read_path="data/NR/1st-example/gnb0.log", save_path="data/NR/1st-example/export.csv")
+    log = GNBLogFile(
+        read_path="data/NR/1st-example/gnb0.log",
+        save_path="data/NR/1st-example/export.csv",
+        timetable=[
+            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+            ((datetime.time(9, 58, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+        ]
+    )
     print("Preprocessing finished in {:.2f} seconds".format(time.time() - start))

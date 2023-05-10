@@ -34,8 +34,8 @@ class GNBRecordPHY(GNBRecord):
         super().__init__(raw_record)
 
     def _extract_basic_info(self) -> Dict[str, str]:
-        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+):', self.raw_record[0])
-        keys = ["dir", "ue_id", "cell_id", "rnti", "sfn", "channel"]
+        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\.(\S+)\s+(\S+):', self.raw_record[0])
+        keys = ["dir", "ue_id", "cell_id", "rnti", "frame", "subframe", "channel"]
         return dict(zip(keys, match.groups()))
 
     def _extract_short_message(self) -> Dict[str, str]:
@@ -103,6 +103,7 @@ class GNBLogFile:
         self.raw_records: List[List[str]] = self._group_lines()
         self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
         self._filter_phy_drb_record()
+        self._sort_records()
         self._export_csv(save_path)
 
     def _process_header(self) -> datetime.date:
@@ -163,12 +164,28 @@ class GNBLogFile:
                 pass
         self.records = filtered_records
 
-    # def _filter_rlc_record(self):
-    #     """Keep only records of RLC layer, config ONLY"""
-    #     self.records = [record for record in self.records if record.layer == "RLC"]
+    def _sort_records(self):
+        """Sort physical layer records in period-frame-subframe order"""
+        periods: List[List[GNBRecord]] = []
+        current_period: List[GNBRecord] = []
+        last_frame: int = -1
+        for record in self.records:
+            if int(record.basic_info["frame"]) - last_frame < -100:
+                periods.append(current_period)
+                current_period = []
+            current_period.append(record)
+            last_frame = int(record.basic_info["frame"])
+        if current_period:
+            periods.append(current_period)
+        for period in periods:
+            period.sort(key=lambda record: (int(record.basic_info["frame"]), int(record.basic_info["subframe"])))
+        records: List[GNBRecord] = []
+        for period in periods:
+            records.extend(period)
+        self.records = records
 
     def _export_csv(self, save_path: str):
-        """Save records to csv file"""
+        """Save physical layer records to csv file"""
         with open(save_path, 'w', newline='') as f:
             writer = csv.writer(f)
             keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
@@ -184,16 +201,6 @@ class GNBLogFile:
                 for key in keys_long_message:
                     row.append(record.long_message.get(key, ""))
                 writer.writerow(row)
-
-    # def count_layers(self) -> Dict[str, int]:
-    #     """Count number of each kind of layer in the record"""
-    #     count: Dict[str, int] = {}
-    #     for record in self.records:
-    #         if record.layer in count.keys():
-    #             count[record.layer] += 1
-    #         else:
-    #             count[record.layer] = 1
-    #     return count
 
 
 if __name__ == "__main__":

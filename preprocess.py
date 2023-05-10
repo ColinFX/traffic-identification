@@ -3,13 +3,13 @@ import csv
 import datetime
 import re
 import time
-from typing import Dict, List
+from typing import Dict, List, Match, Pattern
 
 
 class GNBRecord:
     def __init__(self, raw_record: List[str]):
         self.raw_record = raw_record
-        match = re.match(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s\[([A-Z0-9]+)]', raw_record[0])
+        match: Match = re.match(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s\[([A-Z0-9]+)]', raw_record[0])
         self.time: datetime.time = datetime.datetime.strptime(match.groups()[0], "%H:%M:%S.%f").time()
         self.layer: str = match.groups()[1]
         self.basic_info: Dict[str, str] = self._extract_basic_info()
@@ -34,7 +34,10 @@ class GNBRecordPHY(GNBRecord):
         super().__init__(raw_record)
 
     def _extract_basic_info(self) -> Dict[str, str]:
-        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\.(\S+)\s+(\S+):', self.raw_record[0])
+        match: Match = re.match(
+            r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\.(\S+)\s+(\S+):',
+            self.raw_record[0]
+        )
         keys = ["dir", "ue_id", "cell_id", "rnti", "frame", "subframe", "channel"]
         return dict(zip(keys, match.groups()))
 
@@ -54,7 +57,7 @@ class GNBRecordRLC(GNBRecord):
         super().__init__(raw_record)
 
     def _extract_basic_info(self) -> Dict[str, str]:
-        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)', self.raw_record[0])
+        match: Match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s+(\S+)\s+(\S+)', self.raw_record[0])
         keys = ["dir", "ue_id", "bearer"]
         return dict(zip(keys, match.groups()))
 
@@ -70,13 +73,13 @@ class GNBRecordGTPU(GNBRecord):
         super().__init__(raw_record)
 
     def _extract_basic_info(self) -> Dict[str, str]:
-        match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', self.raw_record[0])
+        match: Match = re.match(r'\S+\s+\[\S+]\s+(\S+)\s(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', self.raw_record[0])
         keys = ["dir", "ip", "port"]
         return dict(zip(keys, match.groups()))
 
     def _extract_short_message(self) -> Dict[str, str]:
         short_message: Dict[str, str] = dict(re.findall(r"(\S+)=(\S+)", self.raw_record[0]))
-        match = re.match(
+        match: Match = re.match(
             r'.* (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)\s+>\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)',
             self.raw_record[0]
         )
@@ -96,19 +99,20 @@ class GNBRecordGTPU(GNBRecord):
 
 class GNBLogFile:
     def __init__(self, read_path: str, save_path: str):
+        """Read log from `read_path` and save preprocessed physical layer data records to `save_path` in csv format"""
         self.filename = read_path
         with open(read_path, 'r') as f:
             self.lines: List[str] = f.readlines()
         self.date: datetime.date = self._process_header()
         self.raw_records: List[List[str]] = self._group_lines()
         self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
-        self._filter_phy_drb_record()
+        self._filter_phy_drb_records()
         self._sort_records()
         self._export_csv(save_path)
 
     def _process_header(self) -> datetime.date:
         """Remove header marked by `#` and get date"""
-        i = 0
+        i: int = 0
         while i < len(self.lines) and (self.lines[i].startswith('#')):
             i += 1
         date_str: str = re.search(r'\d{4}-\d{2}-\d{2}', self.lines[i-1]).group()
@@ -117,9 +121,9 @@ class GNBLogFile:
         return date
 
     def _group_lines(self) -> List[List[str]]:
-        """Group lines into blocks as raw_records with plain text"""
+        """Group lines into blocks as `raw_records` with plain text"""
         raw_records: List[List[str]] = []
-        pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z0-9]+]')
+        pattern: Pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3} \[[A-Z0-9]+]')
         current_record: List[str] = []
         for line in self.lines:
             if pattern.match(line):
@@ -134,7 +138,7 @@ class GNBLogFile:
 
     @staticmethod
     def _reformat_record(raw_record: List[str]) -> GNBRecord:
-        """Convert raw_record with plain text into GNBRecord instance"""
+        """Convert `raw_record` with plain text into `GNBRecord` instance"""
         if "[PHY]" in raw_record[0]:
             return GNBRecordPHY(raw_record)
         elif "[RLC]" in raw_record[0]:
@@ -144,7 +148,7 @@ class GNBLogFile:
         else:
             return GNBRecord(raw_record)
 
-    def _filter_phy_drb_record(self):
+    def _filter_phy_drb_records(self):
         """Keep only data records of physical layer"""
         filtered_records: List[GNBRecord] = []
         drb_flag: bool = False

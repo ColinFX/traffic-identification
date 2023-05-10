@@ -3,5 +3,7 @@
     "cuda_index": 0,
     "learning_rate": 0.01,
     "num_epochs": 2,
-    "save_summary_steps": 100
+    "save_summary_steps": 100,
+    "prb_threshold": 20,
+    "window_size": 1
 }

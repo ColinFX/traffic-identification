@@ -17,6 +17,8 @@ class HyperParams(object):
     learning_rate: float
     num_epochs: int
     save_summary_steps: int
+    tb_len_threshold: int
+    window_size: int
     train_size: int
     val_size: int
     test_size: int

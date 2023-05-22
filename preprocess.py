@@ -1,9 +1,13 @@
 import abc
-import csv
+# import csv
 import datetime
+import json
 import re
 import time
 from typing import Dict, List, Match, Pattern, Tuple
+
+import matplotlib.pyplot as plt
+# import numpy as np
 
 
 class GNBRecord:
@@ -103,10 +107,11 @@ class GNBLogFile:
             self,
             read_path: str,
             save_path: str,
-            timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]
+            timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
+            window_size: int = 1,
+            tb_len_threshold: int = 150
     ):
-        """Read log from `read_path` and save preprocessed physical layer data records to `save_path` in csv format"""
-        self.filename = read_path
+        """Read log from `read_path` and save preprocessed physical layer data records for ML/DL models"""
         with open(read_path, 'r') as f:
             self.lines: List[str] = f.readlines()
         self.date: datetime.date = self._process_header()
@@ -114,8 +119,11 @@ class GNBLogFile:
         self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
         self._filter_phy_drb_records()
         self._sort_records()
-        self._add_label(timetable)
-        self._export_csv(save_path)
+        self._add_labels(timetable)
+        self._export_json(save_path)
+        self.samples: List[List[GNBRecord]] = self._regroup_records(window_size)
+        self._filter_samples(tb_len_threshold)
+        self.sample_labels: List[str] = self._reform_sample_labels()
 
     def _process_header(self) -> datetime.date:
         """Remove header marked by `#` and get date"""
@@ -177,65 +185,192 @@ class GNBLogFile:
 
     def _sort_records(self):
         """Sort physical layer records in period-frame-subframe order"""
-        periods: List[List[GNBRecord]] = []
-        current_period: List[GNBRecord] = []
+        current_period: int = 0
         last_frame: int = -1
         for record in self.records:
-            if int(record.basic_info["frame"]) - last_frame < -100:
-                periods.append(current_period)
-                current_period = []
-            current_period.append(record)
+            if int(record.basic_info["frame"]) - last_frame < -100:  # -100 CONFIGURABLE
+                current_period += 1
+            record.basic_info["period"] = str(current_period)
             last_frame = int(record.basic_info["frame"])
-        if current_period:
-            periods.append(current_period)
-        for period in periods:
-            period.sort(key=lambda record: (int(record.basic_info["frame"]), int(record.basic_info["subframe"])))
-        records: List[GNBRecord] = []
-        for period in periods:
-            records.extend(period)
-        self.records = records
+        self.records.sort(
+            key=lambda record: (
+                int(record.basic_info["period"]),
+                int(record.basic_info["frame"]),
+                int(record.basic_info["subframe"])
+            )
+        )
 
     @staticmethod
     def _get_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
         """Get ground truth label from given `timetable` for one `record`"""
         for _range, label in timetable:
-            if _range[0] < record.time < _range[1]:
+            if _range[0] <= record.time < _range[1]:
                 return label
         return ""
 
-    def _add_label(self, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]):
-        """Add ground truth label for all `records` by given `timetable`"""
-        for record in self.records:
-            record.label = self._get_label(record, timetable)
+    def _add_labels(
+            self,
+            timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
+            delete_unlabelled: bool = True
+    ):
+        """Add ground truth label for all `records` by given `timetable`, delete records without label if requested"""
+        for idx, record in enumerate(self.records):
+            label = self._get_label(record, timetable)
+            record.label = label
+            if delete_unlabelled and not record.label:
+                del self.records[idx]
 
-    def _export_csv(self, save_path: str):
-        """Save physical layer records to csv file"""
-        with open(save_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
-            keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
-            keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
-            writer.writerow(["label", "time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
+    def _export_json(self, save_path: str):
+        """Save physical layer records with label to json file"""
+        with open(save_path, 'w') as f:
             for record in self.records:
-                if record.label:
-                    row = [record.label, record.time, record.layer]
-                    for key in keys_basic_info:
-                        row.append(record.basic_info.get(key, ""))
-                    for key in keys_short_message:
-                        row.append(record.short_message.get(key, ""))
-                    for key in keys_long_message:
-                        row.append(record.long_message.get(key, ""))
-                    writer.writerow(row)
+                json.dump(vars(record), f, indent=4, default=str)
+                f.write("\n")
+
+    # def _export_csv(self, save_path: str):
+    #     """Save physical layer records with label to csv file"""
+    #     with open(save_path, 'w', newline='') as f:
+    #         writer = csv.writer(f)
+    #         keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
+    #         keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
+    #         keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
+    #         writer.writerow(["label", "time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
+    #         for record in self.records:
+    #             if record.label:
+    #                 row = [record.label, record.time, record.layer]
+    #                 for key in keys_basic_info:
+    #                     row.append(record.basic_info.get(key, np.nan))
+    #                 for key in keys_short_message:
+    #                     row.append(record.short_message.get(key, np.nan))
+    #                 for key in keys_long_message:
+    #                     row.append(record.long_message.get(key, np.nan))
+    #                 writer.writerow(row)
+
+    def _regroup_records(self, window_size: int) -> List[List[GNBRecord]]:
+        """Regroup records by fixed window size (number of frame)"""
+        samples: List[List[GNBRecord]] = []
+        current_period = -1
+        current_frame = - window_size
+        current_sample: List[GNBRecord] = []
+        for record in self.records:
+            if (
+                int(record.basic_info["period"]) == current_period and
+                int(record.basic_info["frame"]) < current_frame + window_size
+            ):
+                current_sample.append(record)
+            else:
+                current_period = int(record.basic_info["period"])
+                current_frame = int(record.basic_info["frame"])
+                if current_sample:
+                    samples.append(current_sample)
+                current_sample = [record]
+        if current_sample:
+            samples.append(current_sample)
+        return samples
+
+    @staticmethod
+    def count_tb_len(sample: List[GNBRecord]) -> int:
+        """Calculate sum of tb_len of records in one sample as amount of data transmitted"""
+        tb_len_sum: int = 0
+        for record in sample:
+            if "tb_len" in record.short_message.keys():
+                tb_len_sum += int(record.short_message["tb_len"])
+        return tb_len_sum
+
+    def _filter_samples(self, threshold: int):
+        """Keep only samples with enough data transmitted"""
+        filtered_samples: List[List[GNBRecord]] = []
+        for sample in self.samples:
+            if GNBLogFile.count_tb_len(sample) >= threshold:
+                filtered_samples.append(sample)
+        self.samples = filtered_samples
+
+    def _reform_sample_labels(self) -> List[str]:
+        """Get label for each newly formed sample by majority voting of records"""
+        sample_labels: List[str] = []
+        for sample in self.samples:
+            voting: Dict[str, int] = {}
+            for record in sample:
+                if record.label in voting.keys():
+                    voting[record.label] += 1
+                else:
+                    voting[record.label] = 1
+            sample_labels.append(max(voting, key=voting.get))
+        return sample_labels
+
+    def count_tags(self):
+        """Count different combinations of tags for each physical channel"""
+        for channel in ["PDSCH", "PDCCH", "PUCCH", "SRS", "PUSCH", "PHICH", "PRACH"]:
+            print(">", channel)
+            combinations = {}
+            for sample in self.samples:
+                for record in sample:
+                    if record.basic_info["channel"] == channel:
+                        tags = list(record.basic_info.keys())
+                        tags.extend(list(record.short_message.keys()))
+                        tags.extend(list(record.long_message.keys()))
+                        tags = str(sorted(tags))
+                        if tags not in combinations.keys():
+                            combinations[tags] = 1
+                        else:
+                            combinations[tags] += 1
+            all_tags = sorted(list(set().union(*[json.loads(key.replace("'", "\"")) for key in combinations.keys()])))
+            new_combinations = {}
+            for key in combinations.keys():
+                new_key = all_tags.copy()
+                for tag_idx, tag in enumerate(new_key):
+                    if ("'" + str(tag) + "'") not in key:
+                        new_key[tag_idx] = " " * len(new_key[tag_idx])
+                new_combinations[str(new_key)] = combinations[key]
+            for key in new_combinations:
+                print("{:>10}\t".format(int(new_combinations[key])), ' '.join(json.loads(key.replace("'", "\""))))
+        print("\n")
 
 
 if __name__ == "__main__":
+    # preprocess
     start = time.time()
     log = GNBLogFile(
         read_path="data/NR/1st-example/gnb0.log",
-        save_path="data/NR/1st-example/export.csv",
+        save_path="data/NR/1st-example/export.json",
         timetable=[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-            ((datetime.time(9, 58, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]
+            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+        ],
+        window_size=1,
+        tb_len_threshold=150
     )
     print("Preprocessing finished in {:.2f} seconds".format(time.time() - start))
+
+    # channel statistics in labelled timezone
+    channel_stat = {}
+    for record in log.records:
+        if record.basic_info["channel"] in channel_stat.keys():
+            channel_stat[record.basic_info["channel"]] += 1
+        else:
+            channel_stat[record.basic_info["channel"]] = 1
+    plt.bar(channel_stat.keys(), channel_stat.values())
+    plt.title("PHY records of different channels in dataset, total {}".format(len(log.records)))
+    plt.ylabel("# records")
+    plt.show()
+
+    # tb_len statistics after regroup and threshold filtering
+    tb_lens_web = []
+    tb_lens_youtube = []
+    for i, label in enumerate(log.sample_labels):
+        if label == "navigation_web":
+            tb_lens_web.append(GNBLogFile.count_tb_len(log.samples[i]))
+        elif label == "streaming_youtube":
+            tb_lens_youtube.append(GNBLogFile.count_tb_len(log.samples[i]))
+        else:
+            pass
+    plt.hist([tb_lens_web, tb_lens_youtube], density=False, histtype='bar', stacked=False, label=["web", "youtube"])
+    plt.yscale('log')
+    plt.title("Sample tb_len statistics with window=1 after threshold=150, total {}".format(len(log.samples)))
+    plt.ylabel("# samples")
+    plt.xlabel("tb_len sum")
+    plt.legend()
+    plt.show()
+
+    # reorganize tags
+    log.count_tags()

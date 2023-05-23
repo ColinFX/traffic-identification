@@ -1,9 +1,9 @@
 {
-    "batch_size": 100,
-    "cuda_index": 0,
-    "learning_rate": 0.01,
-    "num_epochs": 2,
-    "save_summary_steps": 100,
-    "tb_len_threshold": 20,
-    "window_size": 1
+  "batch_size": 100,
+  "cuda_index": 0,
+  "learning_rate": 0.01,
+  "num_epochs": 2,
+  "save_summary_steps": 100,
+  "tb_len_threshold": 20,
+  "window_size": 1
 }

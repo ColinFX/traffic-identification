@@ -1,0 +1,113 @@
+{
+  "PDSCH": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "cr",
+      "harq",
+      "k1",
+      "mod",
+      "prb_start",
+      "prb_end",
+      "prb_len",
+      "retx",
+      "tb_len"
+    ],
+    "long_message": []
+  },
+  "PDCCH": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "L",
+      "cce_index",
+      "dci"
+    ],
+    "long_message": [
+      "harq",
+      "mcs1",
+      "new_data_indicator1",
+      "new_data_indicator2",
+      "precoding_info",
+      "resource_allocation_header",
+      "rv_idx1",
+      "rv_idx2",
+      "tb_swap_flag",
+      "tpc_command"
+    ]
+  },
+  "PUCCH": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "ack",
+      "epre",
+      "format",
+      "n",
+      "occ",
+      "prb_start",
+      "prb_end",
+      "prb_len",
+      "prb2",
+      "snr", 
+      "symb_start",
+      "symb_end",
+      "symb_len"
+    ],
+    "long_message": []
+  },
+  "SRS": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "epre",
+      "prb_start",
+      "prb_end",
+      "prb_len",
+      "snr",
+      "symb_start",
+      "symb_end",
+      "symb_len",
+      "ta"
+    ],
+    "long_message": []
+  },
+  "PUSCH": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "crc",
+      "epre",
+      "harq",
+      "mod",
+      "prb_start",
+      "prb_end",
+      "prb_len",
+      "retx",
+      "rv_idx",
+      "snr",
+      "symb_start",
+      "symb_end",
+      "symb_len",
+      "ta",
+      "tb_len"
+    ],
+    "long_message": []
+  },
+  "PHICH": {
+    "basic_info": [
+      "dir"
+    ],
+    "short_message": [
+      "group",
+      "hi",
+      "seq"
+    ],
+    "long_message": []
+  }
+}

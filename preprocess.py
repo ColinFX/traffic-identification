@@ -1,5 +1,5 @@
 import abc
-# import csv
+import csv
 import datetime
 import json
 import re
@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Match, Pattern, Tuple
 
 import matplotlib.pyplot as plt
-# import numpy as np
+import numpy as np
 
 
 class GNBRecord:
@@ -20,6 +20,7 @@ class GNBRecord:
         self.basic_info: Dict[str, str] = self._extract_basic_info()
         self.short_message: Dict[str, str] = self._extract_short_message()
         self.long_message: Dict[str, str] = self._extract_long_message()
+        self._reformat_prb_symb()
 
     @abc.abstractmethod
     def _extract_basic_info(self) -> Dict[str, str]:
@@ -32,6 +33,29 @@ class GNBRecord:
     @abc.abstractmethod
     def _extract_long_message(self) -> Dict[str, str]:
         return {}
+
+    def _reformat_prb_symb(self):
+        for keyword in ["prb", "symb"]:
+            if keyword in self.short_message.keys():
+                if "," in self.short_message[keyword]:
+                    pairs = self.short_message[keyword].split(",")
+                else:
+                    pairs = [self.short_message[keyword]]
+                keyword_start: int = 101
+                keyword_end: int = -1
+                keyword_len: int = 0
+                for pair in pairs:
+                    if ":" in pair:
+                        start, len_ = map(int, pair.split(':'))
+                    else:
+                        start = int(pair)
+                        len_ = 1
+                    keyword_start = min(keyword_start, start)
+                    keyword_end = max(keyword_end, start + len_)
+                    keyword_len += len_
+                self.short_message[keyword+"_start"] = str(keyword_start)
+                self.short_message[keyword+"_end"] = str(keyword_end)
+                self.short_message[keyword+"_len"] = str(keyword_len)
 
 
 class GNBRecordPHY(GNBRecord):
@@ -228,7 +252,7 @@ class GNBLogFile:
                 f.write("\n")
 
     # def _export_csv(self, save_path: str):
-    #     """Save physical layer records with label to csv file"""
+    #     """Save physical layer records with label to csv file, CONFIG ONLY"""
     #     with open(save_path, 'w', newline='') as f:
     #         writer = csv.writer(f)
     #         keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
@@ -298,8 +322,8 @@ class GNBLogFile:
             sample_labels.append(max(voting, key=voting.get))
         return sample_labels
 
-    def count_tags(self):
-        """Count different combinations of tags for each physical channel"""
+    def count_feature_combinations(self):
+        """Count different combinations of features for each physical channel for feature selection, CONFIG ONLY"""
         for channel in ["PDSCH", "PDCCH", "PUCCH", "SRS", "PUSCH", "PHICH", "PRACH"]:
             print(">", channel)
             combinations = {}
@@ -373,4 +397,5 @@ if __name__ == "__main__":
     plt.show()
 
     # reorganize tags
-    log.count_tags()
+    print("\nTag combinations of different physical layer channels: ")
+    log.count_feature_combinations()

@@ -7,7 +7,6 @@ import time
 from typing import Dict, List, Match, Pattern, Tuple
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 class GNBRecord:
@@ -227,8 +226,8 @@ class GNBLogFile:
     @staticmethod
     def _get_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
         """Get ground truth label from given `timetable` for one `record`"""
-        for _range, label in timetable:
-            if _range[0] <= record.time < _range[1]:
+        for range_, label in timetable:
+            if range_[0] <= record.time < range_[1]:
                 return label
         return ""
 
@@ -374,7 +373,7 @@ if __name__ == "__main__":
         else:
             channel_stat[record.basic_info["channel"]] = 1
     plt.bar(channel_stat.keys(), channel_stat.values())
-    plt.title("PHY records of different channels in dataset, total {}".format(len(log.records)))
+    plt.title("PHY Records of Different Channels in Dataset (total {})".format(len(log.records)))
     plt.ylabel("# records")
     plt.show()
 
@@ -390,9 +389,9 @@ if __name__ == "__main__":
             pass
     plt.hist([tb_lens_web, tb_lens_youtube], density=False, histtype='bar', stacked=False, label=["web", "youtube"])
     plt.yscale('log')
-    plt.title("Sample tb_len statistics with window=1 after threshold=150, total {}".format(len(log.samples)))
+    plt.title("Samples with Different sum(tb_len) After Threshold (total {})".format(len(log.samples)))
     plt.ylabel("# samples")
-    plt.xlabel("tb_len sum")
+    plt.xlabel("sum(tb_len)")
     plt.legend()
     plt.show()
 

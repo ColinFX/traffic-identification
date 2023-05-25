@@ -87,14 +87,14 @@ if __name__ == "__main__":
 
     # remove empty label and corresponding sample
     sample_labels = log.sample_labels
-    X = []
-    y = []
+    X_list: List[List[int or float]] = []
+    y_list: List[str] = []
     for idx, sample_label in enumerate(sample_labels):
         if sample_label in ["navigation_web", "streaming_youtube"]:
-            X.append(sample_matrices[idx])
-            y.append(sample_labels[idx])
-    X = np.array(X)
-    y = np.array(y)
+            X_list.append(sample_matrices[idx])
+            y_list.append(sample_labels[idx])
+    X: np.ndarray = np.array(X_list)
+    y: np.ndarray = np.array(y_list)
     label_encoder = LabelEncoder().fit(y)
     y = label_encoder.transform(y)
 

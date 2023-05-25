@@ -2,15 +2,18 @@ import datetime
 import json
 from typing import Dict, List
 
-import lightgbm as lgb
+import numpy as np
 
-from sklearn.linear_model import SGDClassifier
-from sklearn.svm import SVC
+from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import SGDClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.tree import ExtraTreeClassifier
 from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.svm import SVC
+from sklearn.tree import ExtraTreeClassifier
+from xgboost import XGBClassifier
 
 from preprocess import GNBLogFile
 
@@ -60,10 +63,10 @@ if __name__ == "__main__":
             for i in range(len(record.key_info)):
                 try:
                     record.key_info[i] = eval(record.key_info[i])
-                except:
+                except (NameError, TypeError, SyntaxError) as _:
                     try:
                         record.key_info[i] = eval("".join([str(ord(c)) for c in record.key_info[i]]))
-                    except:
+                    except TypeError as _:
                         pass
 
     # assemble combined vector for each sample
@@ -90,8 +93,12 @@ if __name__ == "__main__":
         if sample_label in ["navigation_web", "streaming_youtube"]:
             X.append(sample_matrices[idx])
             y.append(sample_labels[idx])
+    X = np.array(X)
+    y = np.array(y)
+    label_encoder = LabelEncoder().fit(y)
+    y = label_encoder.transform(y)
 
-    # test
+    # evaluate models
     X_train, X_test, y_train, y_test = train_test_split(X, y)
     models = {
         "sgd": SGDClassifier(),
@@ -99,12 +106,22 @@ if __name__ == "__main__":
         "rf": RandomForestClassifier(),
         "mlp": MLPClassifier(),
         "tree": ExtraTreeClassifier(),
-        "lgbm": lgb.LGBMClassifier()
+        "xgb": XGBClassifier(),
+        "lgb": LGBMClassifier()
     }
     for model_name in models.keys():
-        print(">>", model_name)
         model = models[model_name]
         model.fit(X_train, y_train)
         y_test_pred = model.predict(X_test)
-        print(accuracy_score(y_test, y_test_pred))
+        print("\n>> {:<3} {:.4f}".format(model_name, accuracy_score(y_test, y_test_pred)))
         print(confusion_matrix(y_test, y_test_pred))
+        if model_name == "lgb":
+            print("\n>> LGBM feature importance analysis")
+            importance = model.feature_importances_
+            acc_importance = [sum([importance[68*i+feature] for i in range(10)]) for feature in range(68)]
+            i = 0
+            for channel in features.keys():
+                for field in features[channel].keys():
+                    for element in features[channel][field]:
+                        print("{:<5} {:<13} {:<26} {:>3}".format(channel, field, element, acc_importance[i]))
+                        i += 1

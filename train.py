@@ -175,17 +175,17 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    cnn = models.CNN.CNN()
+    cnn = models.cnn.CNN()
     if params.cuda_index:
         cnn.cuda(device=torch.device(params.cuda_index))
     optimizer = torch.optim.Adam(cnn.parameters(), lr=params.learning_rate)
     train(
         model=cnn,
         optimizer=optimizer,
-        loss_fn=models.CNN.loss_fn,
+        loss_fn=models.cnn.loss_fn,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        metrics=models.CNN.metrics,
+        metrics=models.cnn.metrics,
         params=params,
         model_dir=args.model_dir
     )

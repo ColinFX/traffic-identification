@@ -8,9 +8,10 @@ import torch
 class HyperParams(object):
     """
     Examples of usage:
-        * create params instance by `params = HyperParams(json_path)`
-        * change one param value by `params.learning_rate = 0.5`
-        * show one param values by `print(params.learning_rate)`
+        * create params instance by `params = HyperParams("./params.json")`
+        * change param value by `params.learning_rate = 0.5`
+        * show param value by `print(params.learning_rate)`
+        * save params instance by `params.save("./params.json")`
     """
     batch_size: int
     cuda_index: int
@@ -24,7 +25,7 @@ class HyperParams(object):
     test_size: int
 
     def __init__(self, json_path: str):
-        with open(json_path) as file:
+        with open(json_path, 'r') as file:
             params = json.load(file)
             self.__dict__.update(params)
 
@@ -33,7 +34,7 @@ class HyperParams(object):
             json.dump(self.__dict__, file, indent=4)
 
     def update(self, json_path: str):
-        with open(json_path) as file:
+        with open(json_path, 'r') as file:
             params = json.load(file)
             self.__dict__.update(params)
 

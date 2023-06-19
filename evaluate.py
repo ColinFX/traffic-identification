@@ -85,15 +85,15 @@ if __name__ == "__main__":
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    cnn = models.CNN.CNN()
+    cnn = models.cnn.CNN()
     if params.cuda_index:
         cnn.cuda(device=torch.device(params.cuda_index))
     utils.load_checkpoint(os.path.join(args.model_dir, args.restore_file + ".pth.tar"), cnn)
     test_metrics = evaluate(
         model=cnn,
-        loss_fn=models.CNN.loss_fn,
+        loss_fn=models.cnn.loss_fn,
         data_iterator=iter(test_data_loader),
-        metrics=models.CNN.metrics,
+        metrics=models.cnn.metrics,
         num_steps=num_steps
     )
 

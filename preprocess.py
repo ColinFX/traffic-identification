@@ -3,7 +3,6 @@ import csv
 import datetime
 import json
 import re
-import time
 from typing import Dict, List, Match, Pattern, Tuple
 
 import matplotlib.pyplot as plt
@@ -130,6 +129,64 @@ class GNBRecordGTPU(GNBRecord):
         return long_message
 
 
+class GNBSample:
+    def __init__(
+            self,
+            records: List[GNBRecord],
+            period: int,
+            frame_cycle: int,
+            window_size: int
+    ):
+        self.records = records
+        self.period = period
+        self.frame_cycle = frame_cycle
+        self.window_size = window_size
+        self.tb_len: int = self._count_tb_len()
+        self.label: str = self._get_sample_label()
+
+    def _count_tb_len(self) -> int:
+        """Calculate sum of tb_len of records in one sample as amount of data transmitted"""
+        tb_len_sum: int = 0
+        for record in self.records:
+            if "tb_len" in record.short_message.keys():
+                tb_len_sum += int(record.short_message["tb_len"])
+        return tb_len_sum
+
+    def _get_sample_label(self) -> str:
+        """Get label for each newly formed sample by majority voting of records"""
+        voting: Dict[str, int] = {}
+        for record in self.records:
+            if record.label in voting.keys():
+                voting[record.label] += 1
+            else:
+                voting[record.label] = 1
+        return max(voting, key=voting.get)
+
+    def form_sample_X(self, feature_map: Dict[str, Dict[str, List[str]]]) -> np.ndarray:
+        """Construct array as direct input to ML/DL models, use only after all features are numerical, NAIVE APPROACH"""
+        raw_X: List[List[int or float]] = []
+        for frame in range(self.frame_cycle * self.window_size, (self.frame_cycle+1) * self.window_size):
+            for subframe in range(20):
+                raw_X_subframe: List[int or float] = []
+                for cell_id in ["03", "04"]:
+                    for channel in feature_map.keys():
+                        channel_in_subframe_flag = False
+                        for record in self.records:
+                            if (
+                                not channel_in_subframe_flag and
+                                record.basic_info["channel"] == channel and
+                                record.basic_info["cell_id"] == cell_id and
+                                int(record.basic_info["frame"]) == frame and
+                                int(record.basic_info["subframe"]) == subframe
+                            ):
+                                raw_X_subframe.extend(record.key_info)
+                                channel_in_subframe_flag = True
+                        if not channel_in_subframe_flag:
+                            raw_X_subframe.extend([-1] * sum([len(value) for value in feature_map[channel].values()]))
+                raw_X.append(raw_X_subframe)
+        return np.array(raw_X)
+
+
 class GNBLogFile:
     def __init__(
             self,
@@ -148,12 +205,11 @@ class GNBLogFile:
         self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
         self._filter_phy_drb_records()
         self._sort_records()
-        self._add_labels(timetable)
+        self._add_record_labels(timetable)
         self._extract_key_features(feature_map)
-        self._export_json(save_path)
-        self.samples: List[List[GNBRecord]] = self._regroup_records(window_size)
+        self.export_json(save_path)
+        self.samples: List[GNBSample] = self._regroup_records(window_size)
         self._filter_samples(tb_len_threshold)
-        self.sample_labels: List[str] = self._reform_sample_labels()
 
     def _process_header(self) -> datetime.date:
         """Remove header marked by `#` and get date"""
@@ -231,21 +287,21 @@ class GNBLogFile:
         )
 
     @staticmethod
-    def _get_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
+    def _get_record_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
         """Get ground truth label from given `timetable` for one `record`"""
         for range_, label in timetable:
             if range_[0] <= record.time < range_[1]:
                 return label
-        return ""
+        return "noise"
 
-    def _add_labels(
+    def _add_record_labels(
             self,
             timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
             delete_unlabelled: bool = True
     ):
         """Add ground truth label for all `records` by given `timetable`, delete records without label if requested"""
         for idx, record in enumerate(self.records):
-            label = self._get_label(record, timetable)
+            label = self._get_record_label(record, timetable)
             record.label = label
             if delete_unlabelled and not record.label:
                 del self.records[idx]
@@ -273,14 +329,14 @@ class GNBLogFile:
             record.key_info = key_info
         return feature_map
 
-    def _export_json(self, save_path: str):
+    def export_json(self, save_path: str):
         """Save physical layer records with label to json file, CONFIG ONLY"""
         with open(save_path, 'w') as f:
             for record in self.records:
                 json.dump(vars(record), f, indent=4, default=str)
                 f.write("\n")
 
-    def _export_csv(self, save_path: str):
+    def export_csv(self, save_path: str):
         """Save physical layer records with label to csv file, CONFIG ONLY"""
         with open(save_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -299,85 +355,150 @@ class GNBLogFile:
                         row.append(record.long_message.get(key, np.nan))
                     writer.writerow(row)
 
-    def _regroup_records(self, window_size: int) -> List[List[GNBRecord]]:
-        """Regroup records by fixed window size (number of frame)"""
-        samples: List[List[GNBRecord]] = []
+    def _regroup_records(self, window_size: int) -> List[GNBSample]:
+        """Form samples by fixed window size (number of frames, recommended to be power of 2)"""
+        samples: List[GNBSample] = []
         current_period = -1
-        current_frame = - window_size
-        current_sample: List[GNBRecord] = []
+        current_frame_cycle = -1
+        current_sample_records: List[GNBRecord] = []
         for record in self.records:
             if (
                 int(record.basic_info["period"]) == current_period and
-                int(record.basic_info["frame"]) < current_frame + window_size
+                int(record.basic_info["frame"]) // window_size == current_frame_cycle
             ):
-                current_sample.append(record)
+                current_sample_records.append(record)
             else:
+                if current_sample_records:
+                    samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size))
+                current_sample_records = [record]
                 current_period = int(record.basic_info["period"])
-                current_frame = int(record.basic_info["frame"])
-                if current_sample:
-                    samples.append(current_sample)
-                current_sample = [record]
-        if current_sample:
-            samples.append(current_sample)
+                current_frame_cycle = int(record.basic_info["frame"]) // window_size
+
+        if current_sample_records:
+            samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size))
         return samples
 
-    @staticmethod
-    def _count_tb_len(sample: List[GNBRecord]) -> int:
-        """Calculate sum of tb_len of records in one sample as amount of data transmitted"""
-        tb_len_sum: int = 0
-        for record in sample:
-            if "tb_len" in record.short_message.keys():
-                tb_len_sum += int(record.short_message["tb_len"])
-        return tb_len_sum
-
     def _filter_samples(self, threshold: int):
-        """Keep only samples with enough data transmitted"""
-        filtered_samples: List[List[GNBRecord]] = []
+        """Keep only samples with enough data transmitted and meaningful label"""
+        filtered_samples: List[GNBSample] = []
         for sample in self.samples:
-            if GNBLogFile._count_tb_len(sample) >= threshold:
+            if sample.tb_len >= threshold and sample.label != "noise":
                 filtered_samples.append(sample)
         self.samples = filtered_samples
 
-    def _reform_sample_labels(self) -> List[str]:
-        """Get label for each newly formed sample by majority voting of records"""
-        sample_labels: List[str] = []
-        for sample in self.samples:
-            voting: Dict[str, int] = {}
-            for record in sample:
-                if record.label in voting.keys():
-                    voting[record.label] += 1
-                else:
-                    voting[record.label] = 1
-            sample_labels.append(max(voting, key=voting.get))
-        return sample_labels
+
+class GNBDataset:
+    def __init__(
+            self,
+            read_paths: List[str],
+            save_paths: List[str],
+            feature_path: str,
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
+            window_size: int = 1,
+            tb_len_threshold: int = 150
+    ):
+        """Read log from multiple files and generate generalized dataset (X,y) for """
+        self.feature_map: Dict[str, Dict[str, List[str]]] = self._get_feature_map(feature_path)
+        self.window_size = window_size
+        self.logfiles: List[GNBLogFile] = self._construct_logfiles(
+            read_paths,
+            save_paths,
+            timetables,
+            tb_len_threshold
+        )
+        self._embed_features()
+        self.label_encoder = LabelEncoder()
+        self.X: np.ndarray = self._form_dataset_X()
+        self.y: np.ndarray = self._form_dataset_y()
+
+    @staticmethod
+    def _get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
+        """Read feature map from json containing key features to be taken by ML/DL models"""
+        with open(feature_path, 'r') as f:
+            return json.load(f)
+
+    def _construct_logfiles(
+            self,
+            read_paths: List[str],
+            save_paths: List[str],
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
+            tb_len_threshold: int
+    ):
+        """Read all logfiles from paths in the given list"""
+        logfiles: List[GNBLogFile] = []
+        for idx in (t := tqdm.trange(len(read_paths))):
+            t.set_postfix({"read_path": "\""+read_paths[idx]+"\""})
+            logfiles.append(
+                GNBLogFile(
+                    read_paths[idx],
+                    save_paths[idx],
+                    self.feature_map,
+                    timetables[idx],
+                    self.window_size,
+                    tb_len_threshold
+                )
+            )
+        return logfiles
+
+    def _embed_features(self):
+        """Processing key_info vector to pure numeric, NAIVE APPROACH"""
+        for logfile in self.logfiles:
+            for sample in logfile.samples:
+                for record in sample.records:
+                    for i in range(len(record.key_info)):
+                        try:
+                            record.key_info[i] = eval(record.key_info[i])
+                        except (NameError, TypeError, SyntaxError) as _:
+                            try:
+                                record.key_info[i] = eval("".join([str(ord(c)) for c in record.key_info[i]]))
+                            except TypeError as _:
+                                pass
+
+    def _form_dataset_X(self) -> np.ndarray:
+        """Assemble combined vector for each sample as input to ML/DL models"""
+        raw_X: List[np.ndarray] = []
+        for logfile in self.logfiles:
+            for sample in logfile.samples:
+                raw_X.append(sample.form_sample_X(self.feature_map))
+        return np.array(raw_X)
+
+    def _form_dataset_y(self) -> np.ndarray:
+        """Assemble ground-truth labels as input to ML/DL models"""
+        raw_y: List[str] = []
+        for logfile in self.logfiles:
+            for sample in logfile.samples:
+                raw_y.append(sample.label)
+        self.label_encoder.fit(raw_y)
+        return self.label_encoder.transform(raw_y)
 
     def plot_channel_statistics(self):
-        """Plot bar chart of channel statistics in labelled timezone, CONFIG ONLY"""
+        """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
         channel_stat: Dict[str, int] = {}
-        for record in self.records:
-            if record.basic_info["channel"] in channel_stat.keys():
-                channel_stat[record.basic_info["channel"]] += 1
-            else:
-                channel_stat[record.basic_info["channel"]] = 1
+        for logfile in self.logfiles:
+            for record in logfile.records:
+                if record.basic_info["channel"] in channel_stat.keys():
+                    channel_stat[record.basic_info["channel"]] += 1
+                else:
+                    channel_stat[record.basic_info["channel"]] = 1
         plt.bar(channel_stat.keys(), channel_stat.values())
-        plt.title("PHY Records of Different Channels in Dataset (total {})".format(len(self.records)))
+        plt.title("PHY Records of Different Channels in Dataset (total {} records)".format(sum(channel_stat.values())))
         plt.ylabel("# records")
         plt.show()
 
     def plot_tb_len_statistics(self):
         """Plot sum(tb_len) statistics after regroup and threshold filtering, CONFIG ONLY"""
-        tb_lens_web: List[int] = []
-        tb_lens_youtube: List[int] = []
-        for i, label in enumerate(self.sample_labels):
-            if label == "navigation_web":
-                tb_lens_web.append(GNBLogFile._count_tb_len(self.samples[i]))
-            elif label == "streaming_youtube":
-                tb_lens_youtube.append(GNBLogFile._count_tb_len(self.samples[i]))
-            else:
-                pass
-        plt.hist([tb_lens_web, tb_lens_youtube], density=False, histtype='bar', stacked=False, label=["web", "youtube"])
+        tb_lens_stat: Dict[str, List[int]] = {}
+        for logfile in self.logfiles:
+            for sample in logfile.samples:
+                if sample.label in tb_lens_stat.keys():
+                    tb_lens_stat[sample.label].append(sample.tb_len)
+                else:
+                    tb_lens_stat[sample.label] = [sample.tb_len]
+        plt.hist(tb_lens_stat.values(), density=False, histtype='bar', stacked=False, label=list(tb_lens_stat.keys()))
         plt.yscale('log')
-        plt.title("Samples with Different sum(tb_len) After Threshold (total {})".format(len(self.samples)))
+        plt.title("Samples with Different sum(tb_len) After Threshold (total {} samples)".format(
+            sum(len(list_) for list_ in tb_lens_stat.values())
+        ))
         plt.ylabel("# samples")
         plt.xlabel("sum(tb_len)")
         plt.legend()
@@ -386,20 +507,21 @@ class GNBLogFile:
     def count_feature_combinations(self):
         """Count different combinations of features for each physical channel for feature selection, CONFIG ONLY"""
         print("\nTag combinations of different physical layer channels: ")
-        for channel in ["PDSCH", "PDCCH", "PUCCH", "SRS", "PUSCH", "PHICH", "PRACH"]:
+        for channel in self.feature_map.keys():
             print(">>", channel)
             combinations: Dict[str, int] = {}
-            for sample in self.samples:
-                for record in sample:
-                    if record.basic_info["channel"] == channel:
-                        combination_list = list(record.basic_info.keys())
-                        combination_list.extend(list(record.short_message.keys()))
-                        combination_list.extend(list(record.long_message.keys()))
-                        combination = str(sorted(combination_list))
-                        if combination not in combinations.keys():
-                            combinations[combination] = 1
-                        else:
-                            combinations[combination] += 1
+            for logfile in self.logfiles:
+                for sample in logfile.samples:
+                    for record in sample.records:
+                        if record.basic_info["channel"] == channel:
+                            combination_list = list(record.basic_info.keys())
+                            combination_list.extend(list(record.short_message.keys()))
+                            combination_list.extend(list(record.long_message.keys()))
+                            combination = str(sorted(combination_list))
+                            if combination not in combinations.keys():
+                                combinations[combination] = 1
+                            else:
+                                combinations[combination] += 1
             all_features = sorted(list(
                 set().union(*[json.loads(key.replace("'", "\"")) for key in combinations.keys()])
             ))
@@ -418,125 +540,19 @@ class GNBLogFile:
         print("\n")
 
 
-class GNBDataset:
-    def __init__(
-            self,
-            read_paths: List[str],
-            save_paths: List[str],
-            feature_path: str,
-            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
-            window_size: int = 1,
-            tb_len_threshold: int = 150
-    ):
-        start = time.time()
-        self.feature_map: Dict[str, Dict[str, List[str]]] = self._get_feature_map(feature_path)
-        self.logfiles: List[GNBLogFile] = self._construct_logfiles(
-            read_paths,
-            save_paths,
-            timetables,
-            window_size,
-            tb_len_threshold
-        )
-        self.sample_matrices: List[List[int or float]] = self._form_sample_vectors()
-        self.X, self.y = self._form_sample_labels()
-        print("Preprocessing finished in {:.2f} seconds".format(time.time() - start))
-
-    @staticmethod
-    def _get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
-        """Read feature map from json containing key features to be taken for ML/DL models"""
-        with open(feature_path, 'r') as f:
-            return json.load(f)
-
-    def _construct_logfiles(
-            self,
-            read_paths: List[str],
-            save_paths: List[str],
-            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
-            window_size: int,
-            tb_len_threshold: int
-    ):
-        """Read all logfiles from paths in the given list"""
-        logfiles: List[GNBLogFile] = []
-        for idx in (t := tqdm.trange(len(read_paths))):
-            t.set_postfix({"read_path": read_paths[idx]})
-            logfiles.append(
-                GNBLogFile(
-                    read_paths[idx],
-                    save_paths[idx],
-                    self.feature_map,
-                    timetables[idx],
-                    window_size,
-                    tb_len_threshold
-                )
-            )
-        return logfiles
-
-    def _embedding_features(self):
-        """Processing key_info vector to pure numeric, NAIVE APPROACH"""
-        for logfile in self.logfiles:
-            for sample in logfile.samples:
-                for record in sample:
-                    for i in range(len(record.key_info)):
-                        try:
-                            record.key_info[i] = eval(record.key_info[i])
-                        except (NameError, TypeError, SyntaxError) as _:
-                            try:
-                                record.key_info[i] = eval("".join([str(ord(c)) for c in record.key_info[i]]))
-                            except TypeError as _:
-                                pass
-
-    def _form_sample_vectors(self) -> List[List[int or float]]:
-        """Assemble combined vector for each sample as input to ML/DL models"""
-        sample_matrices: List[List[int or float]] = []
-        for logfile in self.logfiles:
-            for sample in logfile.samples:
-                sample_matrix = []
-                for subframe in range(10):
-                    for channel in self.feature_map.keys():
-                        channel_in_subframe_flag = False
-                        for record in sample:
-                            if (
-                                not channel_in_subframe_flag and
-                                record.basic_info["channel"] == channel and
-                                int(record.basic_info["subframe"]) % 10 == subframe
-                            ):
-                                sample_matrix.extend(record.key_info)
-                                channel_in_subframe_flag = True
-                        if not channel_in_subframe_flag:
-                            sample_matrix.extend(
-                                [-1] * sum([len(value) for value in self.feature_map[channel].values()])
-                            )
-                sample_matrices.append(sample_matrix)
-        return sample_matrices
-
-    def _form_sample_labels(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Assemble ground-truth labels as input to ML/DL models, removing empty label and corresponding sample"""
-        sample_labels = self.logfiles[0].sample_labels
-        X_list: List[List[int or float]] = []
-        y_list: List[str] = []
-        for idx, sample_label in enumerate(sample_labels):
-            if sample_label in ["navigation_web", "streaming_youtube"]:
-                X_list.append(self.sample_matrices[idx])
-                y_list.append(sample_labels[idx])
-        X: np.ndarray = np.array(X_list)
-        y: np.ndarray = np.array(y_list)
-        label_encoder = LabelEncoder().fit(y)
-        y = label_encoder.transform(y)
-        return X, y
-
-
-# if __name__ == "__main__":
-#     log = GNBLogFile(
-#         read_path="data/NR/1st-example/gnb0.log",
-#         feature_path="experiments/base/features.json",
-#         save_path="data/NR/1st-example/export.json",
-#         timetable=[
-#             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-#             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-#         ],
-#         window_size=1,
-#         tb_len_threshold=150
-#     )
-#     log.plot_channel_statistics()
-#     log.plot_tb_len_statistics()
-#     log.count_feature_combinations()
+if __name__ == "__main__":
+    """Unit test of preprocessing"""
+    dataset = GNBDataset(
+        read_paths=["data/NR/1st-example/gnb0.log"],
+        save_paths=["data/NR/1st-example/export.json"],
+        feature_path="experiments/base/features.json",
+        timetables=[[
+            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+        ]],
+        window_size=1,
+        tb_len_threshold=150
+    )
+    dataset.plot_channel_statistics()
+    dataset.plot_tb_len_statistics()
+    dataset.count_feature_combinations()

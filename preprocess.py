@@ -196,7 +196,6 @@ class GNBLogFile:
     def __init__(
             self,
             read_path: str,
-            save_path: str,
             feature_map: Dict[str, Dict[str, List[str]]],
             timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
             window_size: int,
@@ -212,7 +211,6 @@ class GNBLogFile:
         self._sort_records()
         self._add_record_labels(timetable)
         self._extract_key_features(feature_map)
-        self.export_json(save_path)
         self.samples: List[GNBSample] = self._regroup_records(window_size)
         self._filter_samples(tb_len_threshold)
 
@@ -326,32 +324,6 @@ class GNBLogFile:
             record.key_info = key_info
         return feature_map
 
-    def export_json(self, save_path: str):
-        """Save physical layer records with label to json file, CONFIG ONLY"""
-        with open(save_path, 'w') as f:
-            for record in self.records:
-                json.dump(vars(record), f, indent=4, default=str)
-                f.write("\n")
-
-    def export_csv(self, save_path: str):
-        """Save physical layer records with label to csv file, CONFIG ONLY"""
-        with open(save_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
-            keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
-            keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
-            writer.writerow(["label", "time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
-            for record in self.records:
-                if record.label:
-                    row = [record.label, record.time, record.layer]
-                    for key in keys_basic_info:
-                        row.append(record.basic_info.get(key, np.nan))
-                    for key in keys_short_message:
-                        row.append(record.short_message.get(key, np.nan))
-                    for key in keys_long_message:
-                        row.append(record.long_message.get(key, np.nan))
-                    writer.writerow(row)
-
     def _regroup_records(self, window_size: int) -> List[GNBSample]:
         """Form samples by fixed window size (number of frames, recommended to be power of 2)"""
         samples: List[GNBSample] = []
@@ -383,12 +355,37 @@ class GNBLogFile:
                 filtered_samples.append(sample)
         self.samples = filtered_samples
 
+    def export_json(self, save_path: str):
+        """Save physical layer records with label to json file, CONFIG ONLY"""
+        with open(save_path, 'w') as f:
+            for record in self.records:
+                json.dump(vars(record), f, indent=4, default=str)
+                f.write("\n")
+
+    def export_csv(self, save_path: str):
+        """Save physical layer records with label to csv file, CONFIG ONLY"""
+        with open(save_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            keys_basic_info: List[str] = list(set().union(*[obj.basic_info.keys() for obj in self.records]))
+            keys_short_message: List[str] = list(set().union(*[obj.short_message.keys() for obj in self.records]))
+            keys_long_message: List[str] = list(set().union(*[obj.long_message.keys() for obj in self.records]))
+            writer.writerow(["label", "time", "layer"] + keys_basic_info + keys_short_message + keys_long_message)
+            for record in self.records:
+                if record.label:
+                    row = [record.label, record.time, record.layer]
+                    for key in keys_basic_info:
+                        row.append(record.basic_info.get(key, np.nan))
+                    for key in keys_short_message:
+                        row.append(record.short_message.get(key, np.nan))
+                    for key in keys_long_message:
+                        row.append(record.long_message.get(key, np.nan))
+                    writer.writerow(row)
+
 
 if __name__ == "__main__":
     """Unit test of GNBLogFile"""
     logfile = GNBLogFile(
         read_path="data/NR/1st-example/gnb0.log",
-        save_path="data/NR/1st-example/export.json",
         feature_map=utils.get_feature_map("experiments/base/features.json"),
         timetable=[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
@@ -397,3 +394,5 @@ if __name__ == "__main__":
         window_size=1,
         tb_len_threshold=150
     )
+    logfile.export_json(save_path="data/NR/1st-example/export.json")
+    logfile.export_csv(save_path="data/NR/1st-example/export.csv")

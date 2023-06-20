@@ -29,17 +29,17 @@ parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-
 
 def get_data(re_preprocess: bool = False) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
     """Read dataset from npz file or preprocess from raw log file"""
-    if re_preprocess:
+    if re_preprocess and os.path.isfile("../data/NR/1st-example/dataset_Xy.npz"):
         dataset = GNBDataset(
             read_paths=["../data/NR/1st-example/gnb0.log"],
-            save_paths=["../data/NR/1st-example/export.json"],
             feature_path="../experiments/base/features.json",
             timetables=[[
                 ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
                 ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
             ]],
             window_size=1,
-            tb_len_threshold=150
+            tb_len_threshold=150,
+            save_path="../data/NR/1st-example/dataset_Xy.npz"
         )
         dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
         return dataset.X, dataset.y, dataset.feature_map

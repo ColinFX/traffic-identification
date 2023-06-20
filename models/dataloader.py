@@ -1,10 +1,7 @@
-import abc
-import csv
 import datetime
 import json
 import os.path
-import re
-from typing import Dict, List, Match, Pattern, Tuple
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,18 +18,17 @@ class GNBDataset(Dataset):
     def __init__(
             self,
             read_paths: List[str],
-            save_paths: List[str],
             feature_path: str,
             timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
             window_size: int = 1,
-            tb_len_threshold: int = 150
+            tb_len_threshold: int = 150,
+            save_path: str = None
     ):
-        """Read log from multiple files and generate generalized dataset (X,y) for """
+        """Read log from multiple files and generate generalized dataset (X,y) for ML/DL models"""
         self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
         self.window_size = window_size
         self.logfiles: List[GNBLogFile] = self._construct_logfiles(
             read_paths,
-            save_paths,
             timetables,
             tb_len_threshold
         )
@@ -40,11 +36,12 @@ class GNBDataset(Dataset):
         self.label_encoder = LabelEncoder()
         self.X: np.ndarray = self._form_dataset_X()
         self.y: np.ndarray = self._form_dataset_y()
+        if save_path:
+            self._save_Xy(save_path)
 
     def _construct_logfiles(
             self,
             read_paths: List[str],
-            save_paths: List[str],
             timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
             tb_len_threshold: int
     ):
@@ -52,16 +49,13 @@ class GNBDataset(Dataset):
         logfiles: List[GNBLogFile] = []
         for idx in (t := tqdm.trange(len(read_paths))):
             t.set_postfix({"read_path": "\""+read_paths[idx]+"\""})
-            logfiles.append(
-                GNBLogFile(
+            logfiles.append(GNBLogFile(
                     read_paths[idx],
-                    save_paths[idx],
                     self.feature_map,
                     timetables[idx],
                     self.window_size,
                     tb_len_threshold
-                )
-            )
+            ))
         return logfiles
 
     def _embed_features(self):
@@ -95,8 +89,8 @@ class GNBDataset(Dataset):
         self.label_encoder.fit(raw_y)
         return self.label_encoder.transform(raw_y)
 
-    def save_Xy(self, save_dir: str):
-        np.savez(os.path.join(save_dir, "dataset_Xy.npz"), X=self.X, y=self.y)
+    def _save_Xy(self, save_path: str):
+        np.savez(save_path, X=self.X, y=self.y)
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
@@ -175,16 +169,15 @@ if __name__ == "__main__":
     """Unit test of GNBDataset"""
     dataset = GNBDataset(
         read_paths=["../data/NR/1st-example/gnb0.log"],
-        save_paths=["../data/NR/1st-example/export.json"],
         feature_path="../experiments/base/features.json",
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
         ]],
         window_size=1,
-        tb_len_threshold=150
+        tb_len_threshold=150,
+        save_path="../data/NR/1st-example/dataset_Xy.npz"
     )
-    dataset.save_Xy(save_dir="../data/NR/1st-example")
     dataset.plot_channel_statistics()
     dataset.plot_tb_len_statistics()
     dataset.count_feature_combinations()

@@ -62,7 +62,7 @@ def model_selection(X: np.ndarray, y: np.ndarray) -> Dict[str, any]:
         "mlp": MLPClassifier(),
         "tree": ExtraTreeClassifier(),
         "xgb": XGBClassifier(),
-        "cat": CatBoostClassifier(verbose=False),
+        "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
         "lgb": LGBMClassifier()
     }
     for model_name in models.keys():
@@ -110,7 +110,7 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
     return np.mean(cv_scores)
 
 
-def lgb_tuning(X: np.ndarray, y: np.ndarray) -> Tuple[LGBMClassifier, Dict[str, int]]:
+def lgb_tuning(X: np.ndarray, y: np.ndarray) -> LGBMClassifier:
     """Hyperparameter tuning of LGBMClassifier model"""
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=17)
     study = optuna.create_study(direction="minimize", study_name="LGBMClassifier")
@@ -125,7 +125,7 @@ def lgb_tuning(X: np.ndarray, y: np.ndarray) -> Tuple[LGBMClassifier, Dict[str, 
     ))
     for key, value in study.best_params.items():
         logging.info("{:<20} {:<9}".format(key, value))
-    return best_model, study.best_params
+    return best_model
 
 
 def lgb_feature_importance(model: LGBMClassifier, feature_map: Dict[str, Dict[str, List[str]]]) -> Dict[str, int]:
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     """Experiments of machine learning models for binary classification"""
     args = parser.parse_args()
     params = utils.HyperParams(json_path=os.path.join(args.experiment_dir, "params.json"))
-    utils.set_logger(log_path="./ML.log")
+    utils.set_logger(log_path="./ml.log")
 
     logging.info("Loading data...")
     X, y, feature_map = get_data(re_preprocess=False)
@@ -156,8 +156,8 @@ if __name__ == "__main__":
     logging.info("Comparing ML models...")
     models = model_selection(X, y)
 
-    # logging.info("Tuning hyperparameters for LightGBM...")
-    # lgb_best_model, _ = lgb_tuning(X, y)
-    #
-    # logging.info("Evaluating LightGBM model feature importance...")
-    # lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)
+    logging.info("Tuning hyperparameters for LightGBM...")
+    lgb_best_model, _ = lgb_tuning(X, y)
+
+    logging.info("Evaluating LightGBM model feature importance...")
+    lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)

@@ -28,7 +28,7 @@ parser.add_argument("--experiment_dir", default="../experiments/ml")  # hyper-pa
 
 def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
     """Read dataset from npz file or preprocess from raw log file"""
-    if params.re_preprocess and os.path.isfile(os.path.join(args.data_dir, "dataset_Xy.npz")):
+    if params.re_preprocess or not os.path.isfile(os.path.join(args.data_dir, "dataset_Xy.npz")):
         dataset = GNBDataset(
             read_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
             feature_path=os.path.join(args.experiment_dir, "features.json"),

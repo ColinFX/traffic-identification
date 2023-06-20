@@ -9,8 +9,9 @@ from typing import Dict, List, Match, Pattern, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
-
 from sklearn.preprocessing import LabelEncoder
+
+import utils
 
 
 class GNBRecord:
@@ -399,7 +400,7 @@ class GNBDataset:
             tb_len_threshold: int = 150
     ):
         """Read log from multiple files and generate generalized dataset (X,y) for """
-        self.feature_map: Dict[str, Dict[str, List[str]]] = self.get_feature_map(feature_path)
+        self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
         self.window_size = window_size
         self.logfiles: List[GNBLogFile] = self._construct_logfiles(
             read_paths,
@@ -411,12 +412,6 @@ class GNBDataset:
         self.label_encoder = LabelEncoder()
         self.X: np.ndarray = self._form_dataset_X()
         self.y: np.ndarray = self._form_dataset_y()
-
-    @staticmethod
-    def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
-        """Read feature map from json containing key features to be taken by ML/DL models"""
-        with open(feature_path, 'r') as f:
-            return json.load(f)
 
     def _construct_logfiles(
             self,

@@ -1,11 +1,12 @@
 import json
 import logging
 import os
+from typing import Dict, List
 
 import torch
 
 
-class HyperParams(object):
+class HyperParams:
     """
     Examples of usage:
         * create params instance by `params = HyperParams("./params.json")`
@@ -44,7 +45,7 @@ class HyperParams(object):
         return self.__dict__
 
 
-class RunningAverage(object):
+class RunningAverage:
     """
     Examples of usage:
         * create running_avg instance by `running_avg = RunningAverage()`
@@ -128,3 +129,15 @@ def load_checkpoint(
     if optimizer:
         optimizer.load_state_dict(checkpoint['optim_dict'])
     return checkpoint
+
+
+def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
+    """
+    Read feature map from json containing key features to be taken by ML/DL models
+    Return:
+        feature_map: Dict[str, Dict[str, List[str]]] with first level indexing for different physical layer channels
+        and second level indexing for different info fields of GNBRecord, each list containing all wanted features from
+        that channel in that info field
+    """
+    with open(feature_path, 'r') as f:
+        return json.load(f)

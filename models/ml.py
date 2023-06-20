@@ -47,7 +47,7 @@ def get_data(re_preprocess: bool = False) -> Tuple[np.ndarray, np.ndarray, Dict[
         X: np.ndarray = data['X']
         y: np.ndarray = data['y']
         X = np.reshape(X, (X.shape[0], -1))
-        feature_map = GNBDataset.get_feature_map(feature_path="../experiments/base/features.json")
+        feature_map = utils.get_feature_map(feature_path="../experiments/base/features.json")
         return X, y, feature_map
 
 

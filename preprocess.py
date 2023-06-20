@@ -62,6 +62,13 @@ class GNBRecord:
                 self.short_message[keyword+"_end"] = str(keyword_end)
                 self.short_message[keyword+"_len"] = str(keyword_len)
 
+    def get_record_label(self, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
+        """Get ground truth label from given `timetable` for one `record`"""
+        for range_, label in timetable:
+            if range_[0] <= self.time < range_[1]:
+                return label
+        return "noise"
+
 
 class GNBRecordPHY(GNBRecord):
     def __init__(self, raw_record: List[str]):
@@ -288,14 +295,6 @@ class GNBLogFile:
             )
         )
 
-    @staticmethod
-    def _get_record_label(record: GNBRecord, timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]]) -> str:
-        """Get ground truth label from given `timetable` for one `record`"""
-        for range_, label in timetable:
-            if range_[0] <= record.time < range_[1]:
-                return label
-        return "noise"
-
     def _add_record_labels(
             self,
             timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
@@ -303,7 +302,7 @@ class GNBLogFile:
     ):
         """Add ground truth label for all `records` by given `timetable`, delete records without label if requested"""
         for idx, record in enumerate(self.records):
-            label = self._get_record_label(record, timetable)
+            label = record.get_record_label(timetable)
             record.label = label
             if delete_noise and not record.label:
                 del self.records[idx]

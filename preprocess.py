@@ -2,6 +2,7 @@ import abc
 import csv
 import datetime
 import json
+import os.path
 import re
 from typing import Dict, List, Match, Pattern, Tuple
 
@@ -297,13 +298,13 @@ class GNBLogFile:
     def _add_record_labels(
             self,
             timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
-            delete_unlabelled: bool = True
+            delete_noise: bool = True
     ):
         """Add ground truth label for all `records` by given `timetable`, delete records without label if requested"""
         for idx, record in enumerate(self.records):
             label = self._get_record_label(record, timetable)
             record.label = label
-            if delete_unlabelled and not record.label:
+            if delete_noise and not record.label:
                 del self.records[idx]
 
     def _extract_key_features(self, feature_map: Dict[str, Dict[str, List[str]]]):
@@ -398,7 +399,7 @@ class GNBDataset:
             tb_len_threshold: int = 150
     ):
         """Read log from multiple files and generate generalized dataset (X,y) for """
-        self.feature_map: Dict[str, Dict[str, List[str]]] = self._get_feature_map(feature_path)
+        self.feature_map: Dict[str, Dict[str, List[str]]] = self.get_feature_map(feature_path)
         self.window_size = window_size
         self.logfiles: List[GNBLogFile] = self._construct_logfiles(
             read_paths,
@@ -412,7 +413,7 @@ class GNBDataset:
         self.y: np.ndarray = self._form_dataset_y()
 
     @staticmethod
-    def _get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
+    def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
         """Read feature map from json containing key features to be taken by ML/DL models"""
         with open(feature_path, 'r') as f:
             return json.load(f)
@@ -470,6 +471,9 @@ class GNBDataset:
                 raw_y.append(sample.label)
         self.label_encoder.fit(raw_y)
         return self.label_encoder.transform(raw_y)
+
+    def save_Xy(self, save_dir: str):
+        np.savez(os.path.join(save_dir, "dataset_Xy.npz"), X=self.X, y=self.y)
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
@@ -553,6 +557,7 @@ if __name__ == "__main__":
         window_size=1,
         tb_len_threshold=150
     )
+    dataset.save_Xy(save_dir="data/NR/1st-example")
     dataset.plot_channel_statistics()
     dataset.plot_tb_len_statistics()
     dataset.count_feature_combinations()

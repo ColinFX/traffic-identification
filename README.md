@@ -2,37 +2,6 @@
 # traffic-identification
 Research project on the identification of user traffic profiles in 5G (NSA and SA). 
 
-## ml 0.1
-```log
->> sgd 0.6588
-[[901 495]
- [460 943]]
-
->> svc 0.7213
-[[1189  207]
- [ 573  830]]
-
->> rf  0.8903
-[[1221  175]
- [ 132 1271]]
-
->> mlp 0.7531
-[[ 933  463]
- [ 228 1175]]
-
->> tree 0.8003
-[[1104  292]
- [ 267 1136]]
-
->> xgb 0.9521
-[[1307   89]
- [  45 1358]]
-
->> lgb 0.9471
-[[1305   91]
- [  57 1346]]
-```
-
 ## ml 0.2
 ```log
 Best parameters found with logloss=0.1310 and accuracy=0.9486: 
@@ -115,4 +84,32 @@ PHICH basic_info    dir                        9
 PHICH short_message group                      24
 PHICH short_message hi                         12
 PHICH short_message seq                        12
+```
+
+## ml 0.3
+```log
+>> sgd 0.6724
+[[1193  203]
+ [ 714  689]]
+>> svc 0.7213
+[[1189  207]
+ [ 573  830]]
+>> rf  0.8989
+[[1239  157]
+ [ 126 1277]]
+>> mlp 0.7560
+[[1176  220]
+ [ 463  940]]
+>> tree 0.7881
+[[1093  303]
+ [ 290 1113]]
+>> xgb 0.9521
+[[1307   89]
+ [  45 1358]]
+>> cat 0.9443
+[[1292  104]
+ [  52 1351]]
+>> lgb 0.9471
+[[1305   91]
+ [  57 1346]]
 ```

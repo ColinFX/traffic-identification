@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import optuna
 
+from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier, log_evaluation
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
@@ -61,6 +62,7 @@ def model_selection(X: np.ndarray, y: np.ndarray) -> Dict[str, any]:
         "mlp": MLPClassifier(),
         "tree": ExtraTreeClassifier(),
         "xgb": XGBClassifier(),
+        "cat": CatBoostClassifier(verbose=False),
         "lgb": LGBMClassifier()
     }
     for model_name in models.keys():
@@ -151,11 +153,11 @@ if __name__ == "__main__":
     logging.info("Loading data...")
     X, y, feature_map = get_data(re_preprocess=False)
 
-    # logging.info("Comparing ML models...")
-    # models = model_selection(X, y)
+    logging.info("Comparing ML models...")
+    models = model_selection(X, y)
 
-    logging.info("Tuning hyperparameters for LightGBM...")
-    lgb_best_model, _ = lgb_tuning(X, y)
-
-    logging.info("Evaluating LightGBM model feature importance...")
-    lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)
+    # logging.info("Tuning hyperparameters for LightGBM...")
+    # lgb_best_model, _ = lgb_tuning(X, y)
+    #
+    # logging.info("Evaluating LightGBM model feature importance...")
+    # lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)

@@ -4,11 +4,10 @@ import logging
 import os
 from typing import Dict, List, Tuple
 
+from catboost import CatBoostClassifier
+import lightgbm as lgb
 import numpy as np
 import optuna
-
-from catboost import CatBoostClassifier
-from lightgbm import LGBMClassifier, log_evaluation
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, log_loss
@@ -24,31 +23,31 @@ from models.dataloader import GNBDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="../data/NR/1st-example")
-parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-parameter json file
+parser.add_argument("--experiment_dir", default="../experiments/ml")  # hyper-parameter json file
 
 
-def get_data(re_preprocess: bool = False) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
+def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
     """Read dataset from npz file or preprocess from raw log file"""
-    if re_preprocess and os.path.isfile("../data/NR/1st-example/dataset_Xy.npz"):
+    if params.re_preprocess and os.path.isfile(os.path.join(args.data_dir, "dataset_Xy.npz")):
         dataset = GNBDataset(
-            read_paths=["../data/NR/1st-example/gnb0.log"],
-            feature_path="../experiments/base/features.json",
+            read_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+            feature_path=os.path.join(args.experiment_dir, "features.json"),
             timetables=[[
                 ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
                 ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
             ]],
-            window_size=1,
-            tb_len_threshold=150,
-            save_path="../data/NR/1st-example/dataset_Xy.npz"
+            window_size=params.window_size,
+            tb_len_threshold=params.tb_len_threshold,
+            save_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
         dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
         return dataset.X, dataset.y, dataset.feature_map
     else:
-        data = np.load("../data/NR/1st-example/dataset_Xy.npz")
+        data = np.load(os.path.join(args.data_dir, "dataset_Xy.npz"))
         X: np.ndarray = data['X']
         y: np.ndarray = data['y']
         X = np.reshape(X, (X.shape[0], -1))
-        feature_map = utils.get_feature_map(feature_path="../experiments/base/features.json")
+        feature_map = utils.get_feature_map(feature_path=os.path.join(args.experiment_dir, "features.json"))
         return X, y, feature_map
 
 
@@ -63,7 +62,7 @@ def model_selection(X: np.ndarray, y: np.ndarray) -> Dict[str, any]:
         "tree": ExtraTreeClassifier(),
         "xgb": XGBClassifier(),
         "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
-        "lgb": LGBMClassifier()
+        "lgb": lgb.LGBMClassifier()
     }
     for model_name in models.keys():
         model = models[model_name]
@@ -93,16 +92,16 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
     for idx, (train_idx, eval_idx) in enumerate(cv.split(X, y)):
         X_train, X_eval = X[train_idx, :], X[eval_idx, :]
         y_train, y_eval = y[train_idx], y[eval_idx]
-        model = LGBMClassifier(n_jobs=-1, verbose=-1, **param_grid)
+        model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **param_grid)
         model.fit(
             X_train,
             y_train,
             eval_set=[(X_eval, y_eval)],
             eval_metric="binary_logloss",
             callbacks=(
-                [optuna.integration.LightGBMPruningCallback(trial, "binary_logloss"), log_evaluation(0)]
+                [optuna.integration.LightGBMPruningCallback(trial, "binary_logloss"), lgb.log_evaluation(0)]
                 if idx == 0
-                else [log_evaluation(0)]
+                else [lgb.log_evaluation(0)]
             ),
         )
         y_eval_pred_proba = model.predict_proba(X_eval)
@@ -110,12 +109,12 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
     return np.mean(cv_scores)
 
 
-def lgb_tuning(X: np.ndarray, y: np.ndarray) -> LGBMClassifier:
+def lgb_tuning(X: np.ndarray, y: np.ndarray) -> lgb.LGBMClassifier:
     """Hyperparameter tuning of LGBMClassifier model"""
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=17)
     study = optuna.create_study(direction="minimize", study_name="LGBMClassifier")
     study.optimize(lambda trial: _objective(trial, X_train, y_train), n_trials=500)
-    best_model = LGBMClassifier(n_jobs=-1, verbose=-1, **study.best_params)
+    best_model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **study.best_params)
     best_model.fit(X_train, y_train)
     y_test_pred_proba = best_model.predict_proba(X_test)
     y_test_pred = best_model.predict(X_test)
@@ -128,10 +127,10 @@ def lgb_tuning(X: np.ndarray, y: np.ndarray) -> LGBMClassifier:
     return best_model
 
 
-def lgb_feature_importance(model: LGBMClassifier, feature_map: Dict[str, Dict[str, List[str]]]) -> Dict[str, int]:
+def lgb_feature_importance(model: lgb.LGBMClassifier, feature_map: Dict[str, Dict[str, List[str]]]) -> Dict[str, int]:
     """Evaluate relative feature importance according to LightGBM classifier"""
     importance = model.feature_importances_
-    acc_importance = [sum([importance[68 * i + feature] for i in range(10)]) for feature in range(68)]
+    acc_importance = [sum([importance[68 * i + feature] for i in range(20)]) for feature in range(68)]
     feature_importance: Dict[str, int] = {}
     i = 0
     for channel in feature_map.keys():
@@ -148,16 +147,16 @@ if __name__ == "__main__":
     """Experiments of machine learning models for binary classification"""
     args = parser.parse_args()
     params = utils.HyperParams(json_path=os.path.join(args.experiment_dir, "params.json"))
-    utils.set_logger(log_path="./ml.log")
+    utils.set_logger(log_path=os.path.join(args.experiment_dir, "ml.log"))
 
     logging.info("Loading data...")
-    X, y, feature_map = get_data(re_preprocess=False)
+    X, y, feature_map = get_data(params)
 
     logging.info("Comparing ML models...")
     models = model_selection(X, y)
 
     logging.info("Tuning hyperparameters for LightGBM...")
-    lgb_best_model, _ = lgb_tuning(X, y)
+    lgb_best_model = lgb_tuning(X, y)
 
     logging.info("Evaluating LightGBM model feature importance...")
     lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)

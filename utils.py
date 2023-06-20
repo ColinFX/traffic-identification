@@ -18,6 +18,7 @@ class HyperParams:
     cuda_index: int
     learning_rate: float
     num_epochs: int
+    re_preprocess: bool
     save_summary_steps: int
     tb_len_threshold: int
     window_size: int

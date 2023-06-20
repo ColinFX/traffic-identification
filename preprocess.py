@@ -386,7 +386,7 @@ if __name__ == "__main__":
     """Unit test of GNBLogFile"""
     logfile = GNBLogFile(
         read_path="data/NR/1st-example/gnb0.log",
-        feature_map=utils.get_feature_map("experiments/base/features.json"),
+        feature_map=utils.get_feature_map("experiments/ml/features.json"),
         timetable=[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")

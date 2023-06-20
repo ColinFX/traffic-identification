@@ -1,6 +1,5 @@
 import datetime
 import json
-import os.path
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -169,7 +168,7 @@ if __name__ == "__main__":
     """Unit test of GNBDataset"""
     dataset = GNBDataset(
         read_paths=["../data/NR/1st-example/gnb0.log"],
-        feature_path="../experiments/base/features.json",
+        feature_path="../experiments/ml/features.json",
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")

@@ -28,31 +28,30 @@ parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-
 
 def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
     """Read dataset from npz file or preprocess from raw log file"""
-    if params.re_preprocess or not os.path.isfile(os.path.join(args.data_dir, "dataset_Xy.npz")):
+    if params.re_preprocess:
         dataset = GNBDataset(
-            read_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+            params=params,
             feature_path=os.path.join(args.experiment_dir, "features.json"),
+            read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
             timetables=[[
                 ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
                 ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
             ]],
-            params=params,
             save_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
-        dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
-        return dataset.X, dataset.y, dataset.feature_map
     else:
-        data = np.load(os.path.join(args.data_dir, "dataset_Xy.npz"))
-        X: np.ndarray = data['X']
-        y: np.ndarray = data['y']
-        X = np.reshape(X, (X.shape[0], -1))
-        feature_map = utils.get_feature_map(feature_path=os.path.join(args.experiment_dir, "features.json"))
-        return X, y, feature_map
+        dataset = GNBDataset(
+            params=params,
+            feature_path=os.path.join(args.experiment_dir, "features.json"),
+            read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+        )
+    dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
+    return dataset.X, dataset.y, dataset.feature_map
 
 
-def model_selection(X: np.ndarray, y: np.ndarray) -> Dict[str, any]:
+def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> Dict[str, any]:
     """Fit and test multiple machine learning models without hyperparameter tuning for rough model selection"""
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=17)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=params.split_test_percentage, random_state=17)
     models = {
         "sgd": SGDClassifier(),
         "svc": SVC(),
@@ -108,10 +107,9 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
     return np.mean(cv_scores)
 
 
-def lgb_tuning(X: np.ndarray, y: np.ndarray) -> lgb.LGBMClassifier:
+def lgb_tuning(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> lgb.LGBMClassifier:
     """Hyperparameter tuning of LGBMClassifier model"""
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=17)
-    # TODO: split using params percentages
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=params.split_test_percentage, random_state=17)
     study = optuna.create_study(direction="minimize", study_name="LGBMClassifier")
     study.optimize(lambda trial: _objective(trial, X_train, y_train), n_trials=500)
     best_model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **study.best_params)
@@ -127,10 +125,20 @@ def lgb_tuning(X: np.ndarray, y: np.ndarray) -> lgb.LGBMClassifier:
     return best_model
 
 
-def lgb_feature_importance(model: lgb.LGBMClassifier, feature_map: Dict[str, Dict[str, List[str]]]) -> Dict[str, int]:
+def lgb_feature_importance(
+        model: lgb.LGBMClassifier,
+        feature_map: Dict[str, Dict[str, List[str]]],
+        params: utils.HyperParams
+) -> Dict[str, int]:
     """Evaluate relative feature importance according to LightGBM classifier"""
     importance = model.feature_importances_
-    acc_importance = [sum([importance[68 * i + feature] for i in range(20)]) for feature in range(68)]
+    num_features = sum(
+        len(feature_map[channel][field]) for channel in feature_map.keys() for field in feature_map[channel].keys()
+    )
+    acc_importance = [
+        sum([importance[num_features * i + feature] for i in range(20*params.window_size)])
+        for feature in range(num_features)
+    ]
     feature_importance: Dict[str, int] = {}
     i = 0
     for channel in feature_map.keys():
@@ -148,15 +156,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     params = utils.HyperParams(json_path=os.path.join(args.experiment_dir, "params.json"))
     utils.set_logger(log_path=os.path.join(args.experiment_dir, "ml.log"))
-
     logging.info("Loading data...")
-    X, y, feature_map = get_data(params)
-
+    X, y, feature_map = get_data(params=params)
     logging.info("Comparing ML models...")
-    models = model_selection(X, y)
-
+    models = model_selection(X, y, params=params)
+    logging.info("Evaluating LightGBM model feature importance...")
+    lgb_feature_importance(model=models["lgb"], feature_map=feature_map, params=params)
     logging.info("Tuning hyperparameters for LightGBM...")
-    lgb_best_model = lgb_tuning(X, y)
-
-    logging.info("Evaluating LightGBM model features importance...")
-    lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)
+    lgb_best_model = lgb_tuning(X, y, params=params)
+    logging.info("Evaluating fine-tuned LightGBM model feature importance...")
+    lgb_feature_importance(model=lgb_best_model, feature_map=feature_map, params=params)

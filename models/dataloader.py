@@ -1,11 +1,13 @@
 import datetime
 import json
+import os.path
 from typing import Dict, List, Tuple
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 import tqdm
 from sklearn.preprocessing import LabelEncoder
 
@@ -16,25 +18,35 @@ from preprocess import GNBLogFile
 class GNBDataset(Dataset):
     def __init__(
             self,
-            read_paths: List[str],
-            feature_path: str,
-            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
             params: utils.HyperParams,
-            save_path: str
+            feature_path: str,
+            read_log_paths: List[str] = None,
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]] = None,
+            save_path: str = None,
+            read_npz_path: str = None
     ):
         """Read log from multiple files and generate generalized dataset (X,y) for ML/DL models"""
         self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
-        self.window_size = params.window_size
-        self.logfiles: List[GNBLogFile] = self._construct_logfiles(
-            read_paths,
-            timetables,
-            params.tb_len_threshold
-        )
-        self._embed_features()
-        self.label_encoder = LabelEncoder()
-        self.X: np.ndarray = self._form_dataset_X()
-        self.y: np.ndarray = self._form_dataset_y()
-        self._save_Xy(save_path)
+        if not params.re_preprocess and read_npz_path and os.path.isfile(read_npz_path):
+            self.re_preprocessed: bool = False
+            Xy = np.load(read_npz_path)
+            self.X: np.ndarray = Xy["X"]
+            self.y: np.ndarray = Xy["y"]
+        elif read_log_paths and timetables:
+            self.re_preprocessed: bool = True
+            self.window_size = params.window_size
+            self.logfiles: List[GNBLogFile] = self._construct_logfiles(
+                read_log_paths,
+                timetables,
+                params.tb_len_threshold
+            )
+            self._embed_features()
+            self.label_encoder = LabelEncoder()
+            self.X: np.ndarray = self._form_dataset_X()
+            self.y: np.ndarray = self._form_dataset_y()
+            self._save_Xy(save_path)
+        else:
+            raise TypeError("Failed to load GNBDataset from npz file or log files")
 
     def _construct_logfiles(
             self,
@@ -99,6 +111,9 @@ class GNBDataset(Dataset):
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
+        if not self.re_preprocessed:
+            warnings.warn("plot_channel_statistics failed as preprocessing bypassed")
+            return
         channel_stat: Dict[str, int] = {}
         for logfile in self.logfiles:
             for record in logfile.records:
@@ -113,6 +128,9 @@ class GNBDataset(Dataset):
 
     def plot_tb_len_statistics(self):
         """Plot sum(tb_len) statistics after regroup and threshold filtering, CONFIG ONLY"""
+        if not self.re_preprocessed:
+            warnings.warn("plot_tb_len_statistics failed as preprocessing bypassed")
+            return
         tb_lens_stat: Dict[str, List[int]] = {}
         for logfile in self.logfiles:
             for sample in logfile.samples:
@@ -132,7 +150,9 @@ class GNBDataset(Dataset):
 
     def count_feature_combinations(self):
         """Count different combinations of features for each physical channel for feature selection, CONFIG ONLY"""
-        print("\nTag combinations of different physical layer channels: ")
+        if not self.re_preprocessed:
+            warnings.warn("count_feature_combinations failed as preprocessing bypassed")
+            return
         for channel in self.feature_map.keys():
             print(">>", channel)
             combinations: Dict[str, int] = {}
@@ -169,21 +189,15 @@ class GNBDataset(Dataset):
 class GNBDataLoaders:
     def __init__(
             self,
-            read_paths: List[str],
-            feature_path: str,
-            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
             params: utils.HyperParams,
-            save_path: str = None
+            feature_path: str,
+            read_log_paths: List[str] = None,
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]] = None,
+            save_path: str = None,
+            read_npz_path: str = None
     ):
         """Get train, validation and test dataloader"""
-        self.dataset = GNBDataset(
-            read_paths,
-            feature_path,
-            timetables,
-            params,
-            save_path
-        )
-        # TODO: read Xy from file
+        self.dataset = GNBDataset(params, feature_path, read_log_paths, timetables, save_path, read_npz_path)
         split_datasets = random_split(self.dataset, lengths=[
             (1 - params.split_val_percentage - params.split_test_percentage),
             params.split_val_percentage,
@@ -196,16 +210,17 @@ class GNBDataLoaders:
 
 if __name__ == "__main__":
     """Unit test of GNBDataset"""
+    params = utils.HyperParams(json_path="../experiments/base/params.json")
+    params.re_preprocess = True
     dl = GNBDataLoaders(
-        read_paths=["../data/NR/1st-example/gnb0.log"],
+        params=params,
         feature_path="../experiments/base/features.json",
+        read_log_paths=["../data/NR/1st-example/gnb0.log"],
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
         ]],
-        params=utils.HyperParams(json_path="../experiments/base/params.json"),
-        save_path="../data/NR/1st-example/dataset_Xy.npz"
-    )
+        save_path="../data/NR/1st-example/dataset_Xy.npz")
     dl.dataset.plot_channel_statistics()
     dl.dataset.plot_tb_len_statistics()
     dl.dataset.count_feature_combinations()

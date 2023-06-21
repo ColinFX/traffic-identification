@@ -1,8 +1,8 @@
 {
   "batch_size": 16,
-  "re_preprocess": true,
+  "re_preprocess": false,
   "split_test_percentage": 0.2,
   "split_val_percentage": 0.2,
-  "tb_len_threshold": 20,
+  "tb_len_threshold": 150,
   "window_size": 1
 }

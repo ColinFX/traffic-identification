@@ -23,7 +23,7 @@ from models.dataloader import GNBDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="../data/NR/1st-example")
-parser.add_argument("--experiment_dir", default="../experiments/ml")  # hyper-parameter json file
+parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-parameter json file
 
 
 def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
@@ -36,8 +36,7 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[st
                 ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
                 ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
             ]],
-            window_size=params.window_size,
-            tb_len_threshold=params.tb_len_threshold,
+            params=params,
             save_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
         dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
@@ -89,14 +88,14 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
     }
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
     cv_scores = np.empty(5)
-    for idx, (train_idx, eval_idx) in enumerate(cv.split(X, y)):
-        X_train, X_eval = X[train_idx, :], X[eval_idx, :]
-        y_train, y_eval = y[train_idx], y[eval_idx]
+    for idx, (train_idx, val_idx) in enumerate(cv.split(X, y)):
+        X_train, X_val = X[train_idx, :], X[val_idx, :]
+        y_train, y_val = y[train_idx], y[val_idx]
         model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **param_grid)
         model.fit(
             X_train,
             y_train,
-            eval_set=[(X_eval, y_eval)],
+            eval_set=[(X_val, y_val)],
             eval_metric="binary_logloss",
             callbacks=(
                 [optuna.integration.LightGBMPruningCallback(trial, "binary_logloss"), lgb.log_evaluation(0)]
@@ -104,14 +103,15 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
                 else [lgb.log_evaluation(0)]
             ),
         )
-        y_eval_pred_proba = model.predict_proba(X_eval)
-        cv_scores[idx] = log_loss(y_eval, y_eval_pred_proba)
+        y_eval_pred_proba = model.predict_proba(X_val)
+        cv_scores[idx] = log_loss(y_val, y_eval_pred_proba)
     return np.mean(cv_scores)
 
 
 def lgb_tuning(X: np.ndarray, y: np.ndarray) -> lgb.LGBMClassifier:
     """Hyperparameter tuning of LGBMClassifier model"""
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=17)
+    # TODO: split using params percentages
     study = optuna.create_study(direction="minimize", study_name="LGBMClassifier")
     study.optimize(lambda trial: _objective(trial, X_train, y_train), n_trials=500)
     best_model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **study.best_params)
@@ -158,5 +158,5 @@ if __name__ == "__main__":
     logging.info("Tuning hyperparameters for LightGBM...")
     lgb_best_model = lgb_tuning(X, y)
 
-    logging.info("Evaluating LightGBM model feature importance...")
+    logging.info("Evaluating LightGBM model features importance...")
     lgb_feature_importance(model=lgb_best_model, feature_map=feature_map)

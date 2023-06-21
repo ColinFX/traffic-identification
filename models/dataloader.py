@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 import tqdm
 from sklearn.preprocessing import LabelEncoder
 
@@ -19,24 +19,22 @@ class GNBDataset(Dataset):
             read_paths: List[str],
             feature_path: str,
             timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
-            window_size: int = 1,
-            tb_len_threshold: int = 150,
-            save_path: str = None
+            params: utils.HyperParams,
+            save_path: str
     ):
         """Read log from multiple files and generate generalized dataset (X,y) for ML/DL models"""
         self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
-        self.window_size = window_size
+        self.window_size = params.window_size
         self.logfiles: List[GNBLogFile] = self._construct_logfiles(
             read_paths,
             timetables,
-            tb_len_threshold
+            params.tb_len_threshold
         )
         self._embed_features()
         self.label_encoder = LabelEncoder()
         self.X: np.ndarray = self._form_dataset_X()
         self.y: np.ndarray = self._form_dataset_y()
-        if save_path:
-            self._save_Xy(save_path)
+        self._save_Xy(save_path)
 
     def _construct_logfiles(
             self,
@@ -89,7 +87,15 @@ class GNBDataset(Dataset):
         return self.label_encoder.transform(raw_y)
 
     def _save_Xy(self, save_path: str):
-        np.savez(save_path, X=self.X, y=self.y)
+        """Write preprocessed X and y to file for further usage"""
+        if save_path:
+            np.savez(save_path, X=self.X, y=self.y)
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        return torch.tensor(self.X[idx]), self.y[idx]
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
@@ -160,23 +166,46 @@ class GNBDataset(Dataset):
         print("\n")
 
 
-class GNBDataLoader(DataLoader):
-    pass
+class GNBDataLoaders:
+    def __init__(
+            self,
+            read_paths: List[str],
+            feature_path: str,
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
+            params: utils.HyperParams,
+            save_path: str = None
+    ):
+        """Get train, validation and test dataloader"""
+        self.dataset = GNBDataset(
+            read_paths,
+            feature_path,
+            timetables,
+            params,
+            save_path
+        )
+        # TODO: read Xy from file
+        split_datasets = random_split(self.dataset, lengths=[
+            (1 - params.split_val_percentage - params.split_test_percentage),
+            params.split_val_percentage,
+            params.split_test_percentage
+        ])
+        self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
+        self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
+        self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)
 
 
 if __name__ == "__main__":
     """Unit test of GNBDataset"""
-    dataset = GNBDataset(
+    dl = GNBDataLoaders(
         read_paths=["../data/NR/1st-example/gnb0.log"],
-        feature_path="../experiments/ml/features.json",
+        feature_path="../experiments/base/features.json",
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
         ]],
-        window_size=1,
-        tb_len_threshold=150,
+        params=utils.HyperParams(json_path="../experiments/base/params.json"),
         save_path="../data/NR/1st-example/dataset_Xy.npz"
     )
-    dataset.plot_channel_statistics()
-    dataset.plot_tb_len_statistics()
-    dataset.count_feature_combinations()
+    dl.dataset.plot_channel_statistics()
+    dl.dataset.plot_tb_len_statistics()
+    dl.dataset.count_feature_combinations()

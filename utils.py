@@ -20,11 +20,10 @@ class HyperParams:
     num_epochs: int
     re_preprocess: bool
     save_summary_steps: int
+    split_test_percentage: float
+    split_val_percentage: float
     tb_len_threshold: int
     window_size: int
-    train_size: int
-    val_size: int
-    test_size: int
 
     def __init__(self, json_path: str):
         with open(json_path, 'r') as file:

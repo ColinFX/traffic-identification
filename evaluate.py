@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 from typing import Callable, Iterator
@@ -9,7 +10,7 @@ from tqdm import trange
 
 import models
 import utils
-from models.dataloader import TCDataLoader
+from models.dataloader import GNBDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data")
@@ -21,7 +22,7 @@ def evaluate(
         model: torch.nn.Module,
         loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor],
         data_iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
-        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], float]],
+        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor]],
         num_steps: int
 ) -> dict[str, float]:
     """
@@ -61,7 +62,7 @@ def evaluate(
 if __name__ == "__main__":
     """Evaluate the model on the test set"""
     args = parser.parse_args()
-    json_path = os.path.join(args.model_dir, "params.json")
+    json_path = os.path.join(args.experiment_dir, "params.json")
     if not os.path.isfile(json_path):
         raise ("Failed to load hyperparameters: no json file found at {}.".format(json_path))
     params = utils.HyperParams(json_path)
@@ -76,27 +77,41 @@ if __name__ == "__main__":
         torch.cuda.manual_seed(42)
 
     # set logger
-    utils.set_logger(os.path.join(args.model_dir, "test.log"))
+    utils.set_logger(os.path.join(args.experiment_dir, "test.log"))
     logging.info("Loading the dataset...")
 
     # load data
-    test_data_loader = TCDataLoader("test", args.data_dir, params)
+    dataloaders = GNBDataLoaders(
+        params=params,
+        feature_path=os.path.join(args.experiment_dir, "features.json"),
+        read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+        timetables=[[
+            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+        ]]
+        # move all these processing to json file
+    )
+    test_data_loader = dataloaders.test
     params.test_size = len(test_data_loader.dataset)
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    cnn = models.cnn.CNN()
-    if params.cuda_index:
-        cnn.cuda(device=torch.device(params.cuda_index))
-    utils.load_checkpoint(os.path.join(args.model_dir, args.restore_file + ".pth.tar"), cnn)
+    transformer = models.transformer.TransformerClassifier(
+        params=params,
+        embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper, save as in train.py
+        num_classes=dataloaders.num_classes
+    )
+    if params.cuda_index > -1:
+        transformer.cuda(device=torch.device(params.cuda_index))
+    utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), transformer)
     test_metrics = evaluate(
-        model=cnn,
-        loss_fn=models.cnn.loss_fn,
-        data_iterator=iter(test_data_loader),
-        metrics=models.cnn.metrics,
+        model=transformer,
+        loss_fn=models.transformer.loss_fn,
+        data_iterator=iter(test_data_loader),  # TODO: rename disgusting data_loader to dataloader
+        metrics=models.transformer.metrics,
         num_steps=num_steps
     )
 
     # save metrics evaluation result on the restore_file
-    save_path = os.path.join(args.model_dir, "metrics_test_{}.json".format(args.restore_file))
+    save_path = os.path.join(args.experiment_dir, "metrics_test_{}.json".format(args.restore_file))
     utils.save_metrics(test_metrics, save_path)

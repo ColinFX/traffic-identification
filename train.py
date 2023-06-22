@@ -1,19 +1,21 @@
 import argparse
+import datetime
 import logging
 import os
 from typing import Callable, Iterator
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from tqdm import trange
 
-import models
+from models.transformer import TransformerClassifier, loss_fn, metrics
 import utils
 from evaluate import evaluate
-from models.dataloader import TCDataLoader
+from models.dataloader import GNBDataLoaders
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="data")
+parser.add_argument("--data_dir", default="data/NR/1st-example")
 parser.add_argument("--experiment_dir", default="experiments/base")  # hyper-parameter json file
 parser.add_argument("--restore_file", default=None)  # "best" or "last", models weights checkpoint
 
@@ -23,7 +25,7 @@ def train_epoch(
         optimizer: torch.optim.Optimizer,
         loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor],
         data_iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
-        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], float]],
+        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor]],
         params: utils.HyperParams,
         num_steps: int
 ):
@@ -47,6 +49,7 @@ def train_epoch(
         # core pipeline
         train_batch, true_labels_batch = next(data_iterator)
         if params.cuda_index > -1:
+            # TODO: write meaning of this variable to doc
             train_batch.cuda(device=torch.device(params.cuda_index))
             true_labels_batch.cuda(device=torch.device(params.cuda_index))
         predicted_proba_batch = model(train_batch)
@@ -73,11 +76,11 @@ def train(
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
         loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor],
-        train_dataloader: TCDataLoader,
-        val_dataloader: TCDataLoader,
-        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], float]],
+        train_dataloader: DataLoader,
+        val_dataloader: DataLoader,
+        metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor]],
         params: utils.HyperParams,
-        model_dir: str
+        experiment_dir: str
 ) -> dict[str, float]:
     """
     Train and evaluate the models on `params.num_epochs` epochs, save checkpoints and metrics.
@@ -89,13 +92,13 @@ def train(
         * val_dataloader: (TCDataLoader) for validation set
         * metrics: (dict) metric_name -> (function (Callable) output_batch, labels_batch -> metric_value)
         * params: (utils.Params) hyperparameters
-        * model_dir: (str) directory containing config, checkpoints and log
+        * experiment_dir: (str) directory containing config, checkpoints and log
     Returns:
         * metrics: (dict) metric_name -> metric_value on the val set of the best epoch
     """
     # reload weights from checkpoint is available
-    if args.restore_file is not None:
-        restore_path = os.path.join(args.model_dir, args.restore_file + ".pth.tar")
+    if args.restore_file and os.path.isfile(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar")):
+        restore_path = os.path.join(args.experiment_dir, args.restore_file + ".pth.tar")
         logging.info("Restoring parameters from {}".format(restore_path))
         utils.load_checkpoint(restore_path, model, optimizer)
 
@@ -129,7 +132,7 @@ def train(
         utils.save_checkpoint(
             state={"epoch": epoch + 1, "state_dict": model.state_dict(), "optim_dict": optimizer.state_dict()},
             is_best=is_best,
-            checkpoint_dir=model_dir
+            checkpoint_dir=experiment_dir
         )
 
         # overwrite the best metrics evaluation result if the models is the best by far
@@ -137,11 +140,11 @@ def train(
             best_metrics = val_metrics
             logging.info("- Found new best accuracy")
             best_val_acc = val_acc
-            best_json_path = os.path.join(model_dir, "metrics_val_best_weights.json")
+            best_json_path = os.path.join(experiment_dir, "metrics_val_best_weights.json")
             utils.save_metrics(val_metrics, best_json_path)
 
         # overwrite last metrics evaluation result
-        last_json_path = os.path.join(model_dir, "metric_val_last_weights.json")
+        last_json_path = os.path.join(experiment_dir, "metric_val_last_weights.json")
         utils.save_metrics(val_metrics, last_json_path)
 
     return best_metrics
@@ -150,7 +153,7 @@ def train(
 if __name__ == "__main__":
     """Train the models on the train and validation set"""
     args = parser.parse_args()
-    json_path = os.path.join(args.model_dir, "params.json")
+    json_path = os.path.join(args.experiment_dir, "params.json")
     if not os.path.isfile(json_path):
         raise ("Failed to load hyperparameters: no json file found at {}.".format(json_path))
     params = utils.HyperParams(json_path)
@@ -165,27 +168,41 @@ if __name__ == "__main__":
         torch.cuda.manual_seed(42)
 
     # set logger
-    utils.set_logger(os.path.join(args.model_dir, "train.log"))
+    utils.set_logger(os.path.join(args.experiment_dir, "train.log"))
     logging.info("Loading the dataset...")
 
     # load data
-    train_dataloader = TCDataLoader("train", args.data_dir, params)
-    val_dataloader = TCDataLoader("val", args.data_dir, params)
+    dataloaders = GNBDataLoaders(
+        params=params,
+        feature_path=os.path.join(args.experiment_dir, "features.json"),
+        read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+        timetables=[[
+            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+        ]]
+    )
+    # TODO: read from npz, maybe share this similar step with ml, move paths to json
+    train_dataloader = dataloaders.train
+    val_dataloader = dataloaders.val
     params.train_size = len(train_dataloader.dataset)
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    cnn = models.cnn.CNN()
-    if params.cuda_index:
-        cnn.cuda(device=torch.device(params.cuda_index))
-    optimizer = torch.optim.Adam(cnn.parameters(), lr=params.learning_rate)
+    transformer = TransformerClassifier(
+        params=params,
+        embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
+        num_classes=dataloaders.num_classes
+    )
+    if params.cuda_index > -1:
+        transformer.cuda(device=torch.device(params.cuda_index))
+    optimizer = torch.optim.Adam(transformer.parameters(), lr=params.learning_rate)
     train(
-        model=cnn,
+        model=transformer,
         optimizer=optimizer,
-        loss_fn=models.cnn.loss_fn,
+        loss_fn=loss_fn,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        metrics=models.cnn.metrics,
+        metrics=metrics,
         params=params,
-        model_dir=args.model_dir
+        experiment_dir=args.experiment_dir
     )

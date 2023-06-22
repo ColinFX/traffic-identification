@@ -26,6 +26,7 @@ class GNBDataset(Dataset):
             read_npz_path: str = None
     ):
         """Read log from multiple files and generate generalized dataset (X,y) for ML/DL models"""
+        # TODO: turn some unsafe attributes to private, this and many other classes
         self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
         if not params.re_preprocess and read_npz_path and os.path.isfile(read_npz_path):
             self.re_preprocessed: bool = False
@@ -69,6 +70,7 @@ class GNBDataset(Dataset):
 
     def _embed_features(self):
         """Processing key_info vector to pure numeric, NAIVE APPROACH"""
+        # TODO: better solution
         for logfile in self.logfiles:
             for sample in logfile.samples:
                 for record in sample.records:
@@ -198,11 +200,22 @@ class GNBDataLoaders:
     ):
         """Get train, validation and test dataloader"""
         self.dataset = GNBDataset(params, feature_path, read_log_paths, timetables, save_path, read_npz_path)
-        split_datasets = random_split(self.dataset, lengths=[
-            (1 - params.split_val_percentage - params.split_test_percentage),
-            params.split_val_percentage,
-            params.split_test_percentage
-        ])
+        split_datasets = random_split(
+            self.dataset,
+            lengths=[
+                (1 - params.split_val_percentage - params.split_test_percentage),
+                params.split_val_percentage,
+                params.split_test_percentage
+            ],
+            generator=torch.Generator().manual_seed(params.random_seed)
+        )
+        self.num_features: int = sum(
+            len(self.dataset.feature_map[channel][field])
+            for channel in self.dataset.feature_map.keys()
+            for field in self.dataset.feature_map[channel].keys()
+        )
+        self.num_classes: int = len(set(self.dataset.y))
+        # TODO: maybe move this to Dataset so that functions in ml.py can use it directly but not calculate again
         self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
         self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
         self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)

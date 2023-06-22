@@ -16,14 +16,21 @@ class HyperParams:
     """
     batch_size: int
     cuda_index: int
+    expansion_factor: int
     learning_rate: float
+    n_heads: int
     num_epochs: int
+    num_layers: int
+    random_seed: int
     re_preprocess: bool
     save_summary_steps: int
     split_test_percentage: float
     split_val_percentage: float
     tb_len_threshold: int
     window_size: int
+    train_size: int
+    val_size: int
+    test_size: int
 
     def __init__(self, json_path: str):
         with open(json_path, 'r') as file:

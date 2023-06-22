@@ -4,6 +4,8 @@ import math
 
 import torch
 
+import utils
+
 
 class PositionalEmbedding(torch.nn.Module):
     def __init__(self, seq_len: int, embed_dim: int):
@@ -99,10 +101,12 @@ class MLPClassifier(torch.nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.layer1 = [torch.nn.Linear(embed_dim, 1) for _ in range(seq_len)]
+        self.relu = torch.nn.ReLU()
         self.layer2 = torch.nn.Linear(seq_len, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.cat([self.layer1[idx](x[idx]) for idx in range(self.embed_dim)])
+        x = self.relu(x)
         x = self.layer2(x)
         return torch.softmax(x, dim=0)
 
@@ -110,18 +114,35 @@ class MLPClassifier(torch.nn.Module):
 class TransformerClassifier(torch.nn.Module):
     def __init__(
             self,
-            seq_len: int,
+            params: utils.HyperParams,
             embed_dim: int,
-            num_layers: int,
             num_classes: int,
-            expansion_factor: int = 4,
-            n_heads: int = 5
     ):
         # TODO: use params
         super().__init__()
-        self.encoder = TransformerEncoder(seq_len, embed_dim, num_layers, expansion_factor, n_heads)
-        self.mlp = MLPClassifier(seq_len, embed_dim, num_classes)
+        self.encoder = TransformerEncoder(
+            seq_len=params.window_size*20,
+            embed_dim=embed_dim,
+            num_layers=params.num_layers,
+            expansion_factor=params.expansion_factor,
+            n_heads=params.n_heads)
+        self.mlp = MLPClassifier(
+            seq_len=params.window_size*20,
+            embed_dim=embed_dim,
+            num_classes=num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.encoder(x)
         return self.mlp(x)
+
+
+def loss_fn(y_pred_proba: torch.Tensor, y_true: torch.Tensor) -> torch.FloatTensor:
+    return torch.nn.CrossEntropyLoss()(y_pred_proba, y_true)
+
+
+def accuracy(y_pred_proba: torch.Tensor, y_true: torch.Tensor) -> torch.FloatTensor:
+    y_pred = torch.argmax(y_pred_proba, dim=1)
+    return torch.sum(y_pred == y_true) / y_true.shape[0]
+
+
+metrics = {"accuracy": accuracy}

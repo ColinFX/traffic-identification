@@ -51,7 +51,12 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[st
 
 def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> Dict[str, any]:
     """Fit and test multiple machine learning models without hyperparameter tuning for rough model selection"""
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=params.split_test_percentage, random_state=17)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=params.split_test_percentage,
+        random_state=params.random_seed
+    )
     models = {
         "sgd": SGDClassifier(),
         "svc": SVC(),
@@ -85,7 +90,7 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
         "reg_alpha": trial.suggest_float("reg_alpha", 0.0, 1.0),
         "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 1.0)
     }
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=params.random_seed)
     cv_scores = np.empty(5)
     for idx, (train_idx, val_idx) in enumerate(cv.split(X, y)):
         X_train, X_val = X[train_idx, :], X[val_idx, :]
@@ -109,7 +114,12 @@ def _objective(trial: optuna.Trial, X: np.ndarray, y: np.ndarray):
 
 def lgb_tuning(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> lgb.LGBMClassifier:
     """Hyperparameter tuning of LGBMClassifier model"""
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=params.split_test_percentage, random_state=17)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=params.split_test_percentage,
+        random_state=params.random_seed
+    )
     study = optuna.create_study(direction="minimize", study_name="LGBMClassifier")
     study.optimize(lambda trial: _objective(trial, X_train, y_train), n_trials=500)
     best_model = lgb.LGBMClassifier(n_jobs=-1, verbose=-1, **study.best_params)

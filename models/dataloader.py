@@ -109,7 +109,7 @@ class GNBDataset(Dataset):
         return self.X.shape[0]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        return torch.tensor(self.X[idx]), self.y[idx]
+        return torch.tensor(self.X[idx], dtype=torch.float32), self.y[idx]
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""

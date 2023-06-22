@@ -8,12 +8,12 @@ import numpy as np
 import torch
 from tqdm import trange
 
-import models
+from models.transformer import TransformerClassifier, loss_fn, metrics
 import utils
 from models.dataloader import GNBDataLoaders
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="data")
+parser.add_argument("--data_dir", default="data/NR/1st-example")
 parser.add_argument("--experiment_dir", default="experiments/base")  # hyper-parameter json file
 parser.add_argument("--restore_file", default="best")  # "best" or "last", models weights checkpoint
 
@@ -23,6 +23,7 @@ def evaluate(
         loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor],
         data_iterator: Iterator[tuple[torch.Tensor, torch.Tensor]],
         metrics: dict[str, Callable[[torch.Tensor, torch.Tensor], torch.FloatTensor]],
+        params: utils.HyperParams,
         num_steps: int
 ) -> dict[str, float]:
     """
@@ -32,6 +33,7 @@ def evaluate(
         * loss_fn: (Callable) output_batch, labels_batch -> loss
         * data_iterator: (Generator) -> train_batch, labels_batch
         * metrics: (dict) metric_name -> (function (Callable) predicted_proba_batch, true_labels_batch -> metric_value)
+        * params: (utils.Params) hyperparameters
         * num_steps: (int) number of batches to train for each epoch
     Returns:
         * metric_results: (dict) metric_name -> metric_value, metrics are provided metrics and loss
@@ -88,15 +90,16 @@ if __name__ == "__main__":
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]]
-        # move all these processing to json file
+        ]],
+        read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+        # TODO: move all these processing to json file
     )
     test_data_loader = dataloaders.test
     params.test_size = len(test_data_loader.dataset)
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    transformer = models.transformer.TransformerClassifier(
+    transformer = TransformerClassifier(
         params=params,
         embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper, save as in train.py
         num_classes=dataloaders.num_classes
@@ -106,9 +109,10 @@ if __name__ == "__main__":
     utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), transformer)
     test_metrics = evaluate(
         model=transformer,
-        loss_fn=models.transformer.loss_fn,
+        loss_fn=loss_fn,
         data_iterator=iter(test_data_loader),  # TODO: rename disgusting data_loader to dataloader
-        metrics=models.transformer.metrics,
+        metrics=metrics,
+        params=params,
         num_steps=num_steps
     )
 

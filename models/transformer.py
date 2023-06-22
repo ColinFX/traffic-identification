@@ -18,6 +18,7 @@ class PositionalEmbedding(torch.nn.Module):
                 self.pos_embedding[pos, i + 1] = math.cos(pos / (10000 ** (2 * (i + 1) / self.embed_dim)))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # in, out: batch_size * seq_len * embed_dim
         return x * math.sqrt(self.embed_dim) + self.pos_embedding
 
 
@@ -33,28 +34,31 @@ class MultiHeadAttention(torch.nn.Module):
         self.out = torch.nn.Linear(self.n_heads * self.single_head_dim, self.embed_dim)
 
     def forward(self, key: torch.Tensor, query: torch.Tensor, value: torch.Tensor):
+        # key, query, value: batch_size * seq_len * embed_dim
         batch_size = key.shape[0]
         seq_len = key.shape[1]
-        seq_len_query = query.shape[1]
         key = key.view(batch_size, seq_len, self.n_heads, self.single_head_dim)
-        query = query.view(batch_size, seq_len_query, self.n_heads, self.single_head_dim)
+        query = query.view(batch_size, seq_len, self.n_heads, self.single_head_dim)
         value = value.view(batch_size, seq_len, self.n_heads, self.single_head_dim)
+        # key, query, value: batch_size * seq_len * n_heads * (embed_dim/n_heads)
         k = self.key_matrix(key)
         q = self.query_matrix(query)
         v = self.value_matrix(value)
+        # k, q, v: batch_size * seq_len * n_heads * (embed_dim/n_heads)
         k = k.transpose(1, 2)
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
-        k_adjusted = k.transpose(-1, -2)
-        product = torch.matmul(q, k_adjusted)
+        # k, q, v: batch_size * n_heads * seq_len * (embed_dim/n_heads)
+        k_adjusted = k.transpose(-1, -2)  # batch_size * n_heads * (embed_dim/n_heads) * seq_len
+        product = torch.matmul(q, k_adjusted)  # batch_size * n_heads * seq_len * seq_len
         product = product / math.sqrt(self.single_head_dim)
-        scores = torch.nn.functional.softmax(product, dim=-1)
-        scores = torch.matmul(scores, v)
+        scores = torch.nn.functional.softmax(product, dim=-1)  # batch_size * n_heads * seq_len * seq_len
+        scores = torch.matmul(scores, v)  # batch_size * n_heads * seq_len * (embed_dim/n_heads)
         concat = scores.transpose(1, 2).contiguous().view(
             batch_size,
-            seq_len_query,
+            seq_len,
             self.single_head_dim*self.n_heads
-        )
+        )  # batch_size * n_heads * embed_dim
         return self.out(concat)
 
 
@@ -73,12 +77,13 @@ class TransformerBlock(torch.nn.Module):
         self.dropout2 = torch.nn.Dropout(0.2)
 
     def forward(self, key: torch.Tensor, query: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
-        attention_out = self.attention(key, query, value)
-        attention_residual_out = attention_out + value
-        norm1_out = self.dropout1(self.norm1(attention_residual_out))
-        feed_forward_out = self.feed_forward(norm1_out)
-        feed_forward_residual_out = feed_forward_out + norm1_out
-        return self.dropout2(self.norm2(feed_forward_residual_out))
+        # key, query, value: batch_size * seq_len * embed_dim
+        attention_out = self.attention(key, query, value)  # batch_size * seq_len * embed_dim
+        attention_residual_out = attention_out + value  # batch_size * seq_len * embed_dim
+        norm1_out = self.dropout1(self.norm1(attention_residual_out))  # batch_size * seq_len * embed_dim
+        feed_forward_out = self.feed_forward(norm1_out)  # batch_size * seq_len * embed_dim
+        feed_forward_residual_out = feed_forward_out + norm1_out  # batch_size * seq_len * embed_dim
+        return self.dropout2(self.norm2(feed_forward_residual_out))  # batch_size * seq_len * embed_dim
 
 
 class TransformerEncoder(torch.nn.Module):
@@ -90,24 +95,27 @@ class TransformerEncoder(torch.nn.Module):
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.positional_encoder(x)
+        x = self.positional_encoder(x)  # x: batch_size * seq_len * embed_dim
         for layer in self.layers:
             x = layer(x, x, x)
-        return x
+        return x  # batch_size * seq_len * embed_dim
 
 
 class MLPClassifier(torch.nn.Module):
     def __init__(self, seq_len: int, embed_dim: int, num_classes: int):
         super().__init__()
+        self.seq_len = seq_len
         self.embed_dim = embed_dim
         self.layer1 = [torch.nn.Linear(embed_dim, 1) for _ in range(seq_len)]
         self.relu = torch.nn.ReLU()
         self.layer2 = torch.nn.Linear(seq_len, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = torch.cat([self.layer1[idx](x[idx]) for idx in range(self.embed_dim)])
-        x = self.relu(x)
-        x = self.layer2(x)
+        # batch_size * seq_len * embed_dim
+        x = x.view(-1, self.embed_dim)  # (batch_size*seq_len) * embed_dim
+        x = torch.cat([self.layer1[idx % self.seq_len](x[idx]) for idx in range(x.shape[0])])  # (batch_size*seq_len)
+        x = x.view(-1, self.seq_len)  # batch_size * seq_len
+        x = self.layer2(x)  # batch_size * num_classes
         return torch.softmax(x, dim=0)
 
 
@@ -132,6 +140,7 @@ class TransformerClassifier(torch.nn.Module):
             num_classes=num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: batch_size * seq_len * embed_dim
         x = self.encoder(x)
         return self.mlp(x)
 

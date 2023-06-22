@@ -124,7 +124,7 @@ def train(
         # evaluate
         num_steps = int((params.val_size + 1) // params.batch_size)
         val_data_iterator = iter(val_dataloader)
-        val_metrics = evaluate(model, loss_fn, val_data_iterator, metrics, num_steps)
+        val_metrics = evaluate(model, loss_fn, val_data_iterator, metrics, params, num_steps)
         val_acc = val_metrics["accuracy"]
         is_best = (val_acc >= best_val_acc)
 
@@ -179,7 +179,8 @@ if __name__ == "__main__":
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]]
+        ]],
+        read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
     )
     # TODO: read from npz, maybe share this similar step with ml, move paths to json
     train_dataloader = dataloaders.train

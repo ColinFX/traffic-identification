@@ -146,7 +146,7 @@ class TransformerClassifier(torch.nn.Module):
 
 
 def loss_fn(y_pred_proba: torch.Tensor, y_true: torch.Tensor) -> torch.FloatTensor:
-    return torch.nn.CrossEntropyLoss()(y_pred_proba, y_true)
+    return torch.nn.CrossEntropyLoss()(y_pred_proba, y_true.long())
 
 
 def accuracy(y_pred_proba: torch.Tensor, y_true: torch.Tensor) -> torch.FloatTensor:

@@ -2,6 +2,7 @@ import argparse
 import datetime
 import logging
 import os
+import time
 from typing import Dict, List, Tuple
 
 from catboost import CatBoostClassifier
@@ -69,8 +70,16 @@ def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> 
     }
     for model_name in models.keys():
         model = models[model_name]
+        train_start = time.time()
         model.fit(X_train, y_train)
+        logging.info("Training of model {} over {} records completed in {} seconds".format(
+            model_name, y_train.shape[0], time.time() - train_start
+        ))
+        test_start = time.time()
         y_test_pred = model.predict(X_test)
+        logging.info("Testing of model {} over {} records completed in {} seconds".format(
+            model_name, y_test.shape[0], time.time() - test_start
+        ))
         logging.info(">> {:<3} {:.4f}".format(model_name, accuracy_score(y_test, y_test_pred)))
         logging.info(confusion_matrix(y_test, y_test_pred))
     return models
@@ -170,9 +179,9 @@ if __name__ == "__main__":
     X, y, feature_map = get_data(params=params)
     logging.info("Comparing ML models...")
     models = model_selection(X, y, params=params)
-    logging.info("Evaluating LightGBM model feature importance...")
-    lgb_feature_importance(model=models["lgb"], feature_map=feature_map, params=params)
-    logging.info("Tuning hyperparameters for LightGBM...")
-    lgb_best_model = lgb_tuning(X, y, params=params)
-    logging.info("Evaluating fine-tuned LightGBM model feature importance...")
-    lgb_feature_importance(model=lgb_best_model, feature_map=feature_map, params=params)
+    # logging.info("Evaluating LightGBM model feature importance...")
+    # lgb_feature_importance(model=models["lgb"], feature_map=feature_map, params=params)
+    # logging.info("Tuning hyperparameters for LightGBM...")
+    # lgb_best_model = lgb_tuning(X, y, params=params)
+    # logging.info("Evaluating fine-tuned LightGBM model feature importance...")
+    # lgb_feature_importance(model=lgb_best_model, feature_map=feature_map, params=params)

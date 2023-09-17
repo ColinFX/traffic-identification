@@ -21,6 +21,7 @@ class GNBRecord:
         self.short_message: Dict[str, str] = self._extract_short_message()
         self.long_message: Dict[str, str] = self._extract_long_message()
         self.key_info: List[str or float or int] = []
+        self.embedded_info: np.ndarray or None = None
         self._reformat_prb_symb()
 
     @abc.abstractmethod
@@ -167,8 +168,8 @@ class GNBSample:
                 voting[record.label] = 1
         return max(voting, key=voting.get)
 
-    def form_sample_X(self, feature_map: Dict[str, Dict[str, List[str]]]) -> np.ndarray:
-        """Construct array as direct input to ML/DL models, use only after all features are numerical, NAIVE APPROACH"""
+    def form_sample_X_naive(self, feature_map: Dict[str, Dict[str, List[str]]]) -> np.ndarray:
+        """Construct array as direct input to ML/DL models, use only after all features are numerical, DEPRECATED"""
         raw_X: List[List[int or float]] = []
         for frame in range(self.frame_cycle * self.window_size, (self.frame_cycle+1) * self.window_size):
             for subframe in range(20):
@@ -188,6 +189,35 @@ class GNBSample:
                                 channel_in_subframe_flag = True
                         if not channel_in_subframe_flag:
                             raw_X_subframe.extend([-1] * sum([len(value) for value in feature_map[channel].values()]))
+                raw_X.append(raw_X_subframe)
+        return np.array(raw_X)
+
+    def form_sample_X(self, feature_map: Dict[str, Dict[str, List[str]]]) -> np.ndarray:
+        """Construct array as direct input to ML/DL models, use only after all records are embedded"""
+        raw_X: List[List[int or float]] = []
+        for frame in range(self.frame_cycle * self.window_size, (self.frame_cycle+1) * self.window_size):
+            for subframe in range(10):
+                raw_X_subframe: List[float] = []
+                for cell, slot in [("03", 0), ("04", 0), ("04", 1)]:
+                    if cell == "04":
+                        subframe = 2 * subframe + slot
+                    for channel in feature_map.keys():
+                        if cell == "04" and channel in ["SRS", "PHICH"]:
+                            continue  # 5G cell does not contain SRS or PHICH records
+                        channel_in_subframe_flag = False
+                        for record in self.records:
+                            if (
+                                record.basic_info["channel"] == channel and
+                                record.basic_info["cell_id"] == cell and
+                                int(record.basic_info["frame"]) == frame and
+                                int(record.basic_info["subframe"]) == subframe
+                            ):
+                                channel_in_subframe_flag = True
+                                raw_X_subframe.extend(record.embedded_info)
+                                break
+                        if not channel_in_subframe_flag:
+                            # TODO get 4 from params.json
+                            raw_X_subframe.extend([0] * 4)
                 raw_X.append(raw_X_subframe)
         return np.array(raw_X)
 

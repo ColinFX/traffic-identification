@@ -12,7 +12,7 @@ from tqdm import trange
 from models.transformer import TransformerClassifier, loss_fn, metrics
 import utils
 from evaluate import evaluate
-from models.dataloader import GNBDataLoaders
+from dataloader import GNBDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")

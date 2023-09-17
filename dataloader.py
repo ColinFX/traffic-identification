@@ -1,3 +1,5 @@
+import logging
+from collections import Counter
 import datetime
 import json
 import os.path
@@ -9,10 +11,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 import tqdm
-from sklearn.preprocessing import LabelEncoder
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder
 
 import utils
-from preprocess import GNBLogFile
+from preprocess import GNBLogFile, GNBRecord
 
 
 class GNBDataset(Dataset):
@@ -45,7 +48,7 @@ class GNBDataset(Dataset):
             self.label_encoder = LabelEncoder()
             self.X: np.ndarray = self._form_dataset_X()
             self.y: np.ndarray = self._form_dataset_y()
-            self._save_Xy(save_path)
+            # self._save_Xy(save_path)
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
 
@@ -68,8 +71,8 @@ class GNBDataset(Dataset):
             ))
         return logfiles
 
-    def _embed_features(self):
-        """Processing key_info vector to pure numeric, NAIVE APPROACH"""
+    def _embed_features_naive(self):
+        """Processing key_info vector to pure numeric, DEPRECATED"""
         # TODO: better solution
         for logfile in self.logfiles:
             for sample in logfile.samples:
@@ -82,6 +85,56 @@ class GNBDataset(Dataset):
                                 record.key_info[i] = eval("".join([str(ord(c)) for c in record.key_info[i]]))
                             except TypeError as _:
                                 pass
+
+    def _embed_features(self):
+        """Embedding key_info vector to pure numeric, rescale features and extract principal components"""
+        # TODO use pd.dataframe to speed up the processing
+        for cell_id in ["03", "04"]:
+            for channel in self.feature_map.keys():
+                if cell_id == "04" and channel in ["SRS", "PHICH"]:
+                    # TODO: any better idea? same in GNBSample.form_sample_X
+                    continue  # 5G cell does not contain SRS or PHICH records
+                print("Embedding {:5} channel of {:2} cell...".format(channel, cell_id))
+                records_channel: List[GNBRecord] = []
+                for logfile in self.logfiles:
+                    for record in logfile.records:
+                        if record.basic_info["cell_id"] == cell_id and record.basic_info["channel"] == channel:
+                            records_channel.append(record)
+                raw_infos: np.ndarray = np.array([record.key_info for record in records_channel])
+                indexes_onehot: List[int] = []
+                indexes_minmax: List[int] = []
+                for column in range(raw_infos.shape[1]):
+                    elements_count = len(Counter(raw_infos[:, column]).keys())
+                    if all([utils.is_number(element) for element in raw_infos[:, column]]) and elements_count > 5:
+                        indexes_minmax.append(column)
+                    elif elements_count > 1:
+                        indexes_onehot.append(column)
+                print(indexes_onehot, indexes_minmax)
+                infos_onehot = raw_infos[:, indexes_onehot]
+                if indexes_onehot:
+                    encoder_onehot = OneHotEncoder(sparse_output=False)
+                    infos_onehot = encoder_onehot.fit_transform(infos_onehot)
+                infos_minmax = raw_infos[:, indexes_minmax]
+                if indexes_minmax:
+                    for i in range(infos_minmax.shape[0]):
+                        for j in range(infos_minmax.shape[1]):
+                            infos_minmax[i, j] = eval(infos_minmax[i, j])
+                    encoder_minmax = MinMaxScaler()
+                    infos_minmax = encoder_minmax.fit_transform(infos_minmax)
+                embedded_infos: np.ndarray
+                if indexes_onehot and indexes_minmax:
+                    embedded_infos = np.concatenate((infos_onehot, infos_minmax), axis=1)
+                elif indexes_onehot:
+                    embedded_infos = infos_onehot
+                elif indexes_minmax:
+                    embedded_infos = infos_minmax
+                else:
+                    raise AssertionError("No valid feature found")
+                # TODO get n_components from params.json, same in GNBSample.form_sample_X
+                pca = PCA(n_components=4)
+                embedded_infos = pca.fit_transform(embedded_infos)
+                for index, record in enumerate(records_channel):
+                    record.embedded_info = embedded_infos[index]
 
     def _form_dataset_X(self) -> np.ndarray:
         """Assemble combined vector for each sample as input to ML/DL models"""
@@ -109,7 +162,7 @@ class GNBDataset(Dataset):
         return self.X.shape[0]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        return torch.tensor(self.X[idx], dtype=torch.float32), self.y[idx]
+        return torch.tensor(self.X[idx], dtype=torch.float32), int(self.y[idx])
 
     def plot_channel_statistics(self):
         """Plot bar chart of channel statistics in labelled timezone before sampling, CONFIG ONLY"""
@@ -222,18 +275,29 @@ class GNBDataLoaders:
 
 
 if __name__ == "__main__":
-    """Unit test of GNBDataset"""
-    params = utils.HyperParams(json_path="../experiments/base/params.json")
-    params.re_preprocess = True
-    dl = GNBDataLoaders(
+    # """Unit test of GNBDataset"""
+    # params = utils.HyperParams(json_path="../experiments/base/params.json")
+    # params.re_preprocess = True
+    # dl = GNBDataLoaders(
+    #     params=params,
+    #     feature_path="../experiments/base/features.json",
+    #     read_log_paths=["../data/NR/1st-example/gnb0.log"],
+    #     timetables=[[
+    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+    #     ]],
+    #     save_path="../data/NR/1st-example/dataset_Xy.npz")
+    # dl.dataset.plot_channel_statistics()
+    # dl.dataset.plot_tb_len_statistics()
+    # dl.dataset.count_feature_combinations()
+
+    params = utils.HyperParams(json_path="experiments/base/params.json")
+    dataset = GNBDataset(
         params=params,
-        feature_path="../experiments/base/features.json",
-        read_log_paths=["../data/NR/1st-example/gnb0.log"],
+        feature_path="experiments/base/features.json",
+        read_log_paths=["data/NR/1st-example/gnb0.log"],
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]],
-        save_path="../data/NR/1st-example/dataset_Xy.npz")
-    dl.dataset.plot_channel_statistics()
-    dl.dataset.plot_tb_len_statistics()
-    dl.dataset.count_feature_combinations()
+        ]]
+    )

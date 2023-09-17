@@ -148,3 +148,11 @@ def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
     """
     with open(feature_path, 'r') as f:
         return json.load(f)
+
+
+def is_number(string: str) -> bool:
+    try:
+        eval(string)
+        return True
+    except (NameError, TypeError, SyntaxError) as _:
+        return False

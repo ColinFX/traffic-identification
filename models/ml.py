@@ -19,7 +19,7 @@ from sklearn.tree import ExtraTreeClassifier
 from xgboost import XGBClassifier
 
 import utils
-from models.dataloader import GNBDataset
+from dataloader import GNBDataset
 
 
 parser = argparse.ArgumentParser()

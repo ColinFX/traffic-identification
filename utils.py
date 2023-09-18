@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import torch
 
@@ -21,6 +21,7 @@ class HyperParams:
     n_heads: int
     num_epochs: int
     num_layers: int
+    pca_n_components: int
     random_seed: int
     re_preprocess: bool
     save_summary_steps: int
@@ -156,3 +157,9 @@ def is_number(string: str) -> bool:
         return True
     except (NameError, TypeError, SyntaxError) as _:
         return False
+
+
+cell_channels: Dict[str, List[str]] = {
+    "03": ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "SRS", "PHICH"],
+    "04": ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
+}

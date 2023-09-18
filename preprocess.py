@@ -20,8 +20,10 @@ class GNBRecord:
         self.basic_info: Dict[str, str] = self._extract_basic_info()
         self.short_message: Dict[str, str] = self._extract_short_message()
         self.long_message: Dict[str, str] = self._extract_long_message()
+        self.message = self.short_message.copy()
+        self.message.update(self.long_message)
         self.key_info: List[str or float or int] = []
-        self.embedded_info: np.ndarray or None = None
+        self.embedded_info: np.ndarray = np.empty([])
         self._reformat_prb_symb()
 
     @abc.abstractmethod
@@ -141,12 +143,14 @@ class GNBSample:
             records: List[GNBRecord],
             period: int,
             frame_cycle: int,
-            window_size: int
+            window_size: int,
+            pca_n_components: int
     ):
         self.records = records
         self.period = period
         self.frame_cycle = frame_cycle
         self.window_size = window_size
+        self.pca_n_components = pca_n_components
         self.tb_len: int = self._count_tb_len()
         self.label: str = self._get_sample_label()
 
@@ -192,23 +196,21 @@ class GNBSample:
                 raw_X.append(raw_X_subframe)
         return np.array(raw_X)
 
-    def form_sample_X(self, feature_map: Dict[str, Dict[str, List[str]]]) -> np.ndarray:
+    def form_sample_X(self) -> np.ndarray:
         """Construct array as direct input to ML/DL models, use only after all records are embedded"""
         raw_X: List[List[int or float]] = []
         for frame in range(self.frame_cycle * self.window_size, (self.frame_cycle+1) * self.window_size):
             for subframe in range(10):
                 raw_X_subframe: List[float] = []
-                for cell, slot in [("03", 0), ("04", 0), ("04", 1)]:
-                    if cell == "04":
+                for cell_id, slot in [("03", 0), ("04", 0), ("04", 1)]:
+                    if cell_id == "04":
                         subframe = 2 * subframe + slot
-                    for channel in feature_map.keys():
-                        if cell == "04" and channel in ["SRS", "PHICH"]:
-                            continue  # 5G cell does not contain SRS or PHICH records
+                    for channel in utils.cell_channels[cell_id]:
                         channel_in_subframe_flag = False
                         for record in self.records:
                             if (
                                 record.basic_info["channel"] == channel and
-                                record.basic_info["cell_id"] == cell and
+                                record.basic_info["cell_id"] == cell_id and
                                 int(record.basic_info["frame"]) == frame and
                                 int(record.basic_info["subframe"]) == subframe
                             ):
@@ -216,8 +218,7 @@ class GNBSample:
                                 raw_X_subframe.extend(record.embedded_info)
                                 break
                         if not channel_in_subframe_flag:
-                            # TODO get 4 from params.json
-                            raw_X_subframe.extend([0] * 4)
+                            raw_X_subframe.extend([0] * self.pca_n_components)
                 raw_X.append(raw_X_subframe)
         return np.array(raw_X)
 
@@ -229,9 +230,13 @@ class GNBLogFile:
             feature_map: Dict[str, Dict[str, List[str]]],
             timetable: List[Tuple[Tuple[datetime.time, datetime.time], str]],
             window_size: int,
+            pca_n_components: int,
             tb_len_threshold: int
     ):
-        """Read log from `read_path` and save preprocessed physical layer data records for ML/DL models"""
+        """
+        Read log from `read_path` and save preprocessed physical layer data records for ML/DL models,
+        feature_map param DEPRECATED
+        """
         with open(read_path, 'r') as f:
             self.lines: List[str] = f.readlines()
         self.date: datetime.date = self._process_header()
@@ -240,8 +245,7 @@ class GNBLogFile:
         self._filter_phy_drb_records()
         self._sort_records()
         self._add_record_labels(timetable)
-        self._extract_key_features(feature_map)
-        self.samples: List[GNBSample] = self._regroup_records(window_size)
+        self.samples: List[GNBSample] = self._regroup_records(window_size, pca_n_components)
         self._filter_samples(tb_len_threshold)
 
     def _process_header(self) -> datetime.date:
@@ -332,7 +336,7 @@ class GNBLogFile:
                 del self.records[idx]
 
     def _extract_key_features(self, feature_map: Dict[str, Dict[str, List[str]]]):
-        """Extract wanted features to key_info list in raw data types for each physical layer record"""
+        """Extract wanted features to key_info list in raw data types for each physical layer record, DEPRECATED"""
         for record in self.records:
             key_info: List[str or float or int] = []
             if record.basic_info["channel"] in feature_map.keys():
@@ -354,7 +358,7 @@ class GNBLogFile:
             record.key_info = key_info
         return feature_map
 
-    def _regroup_records(self, window_size: int) -> List[GNBSample]:
+    def _regroup_records(self, window_size: int, pca_n_components: int) -> List[GNBSample]:
         """Form samples by fixed window size (number of frames, recommended to be power of 2)"""
         samples: List[GNBSample] = []
         current_period = -1
@@ -368,13 +372,14 @@ class GNBLogFile:
                 current_sample_records.append(record)
             else:
                 if current_sample_records:
-                    samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size))
+                    samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
+                    # TODO: pass everything by params
                 current_sample_records = [record]
                 current_period = int(record.basic_info["period"])
                 current_frame_cycle = int(record.basic_info["frame"]) // window_size
 
         if current_sample_records:
-            samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size))
+            samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
         return samples
 
     def _filter_samples(self, threshold: int):
@@ -422,6 +427,7 @@ if __name__ == "__main__":
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
         ],
         window_size=1,
+        pca_n_components=4,
         tb_len_threshold=150
     )
     logfile.export_json(save_path="data/NR/1st-example/export.json")

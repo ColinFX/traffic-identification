@@ -8,6 +8,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 import tqdm
@@ -28,9 +29,11 @@ class GNBDataset(Dataset):
             save_path: str = None,
             read_npz_path: str = None
     ):
-        """Read log from multiple files and generate generalized dataset (X,y) for ML/DL models"""
+        """
+        Read log from multiple files and generate generalized dataset (X,y) for ML/DL models,
+        feature_path param DEPRECATEd
+        """
         # TODO: turn some unsafe attributes to private, this and many other classes
-        self.feature_map: Dict[str, Dict[str, List[str]]] = utils.get_feature_map(feature_path)
         if not params.re_preprocess and read_npz_path and os.path.isfile(read_npz_path):
             self.re_preprocessed: bool = False
             Xy = np.load(read_npz_path)
@@ -39,24 +42,20 @@ class GNBDataset(Dataset):
         elif read_log_paths and timetables:
             self.re_preprocessed: bool = True
             self.window_size = params.window_size
-            self.logfiles: List[GNBLogFile] = self._construct_logfiles(
-                read_log_paths,
-                timetables,
-                params.tb_len_threshold
-            )
-            self._embed_features()
+            self.logfiles: List[GNBLogFile] = self._construct_logfiles(params, read_log_paths, timetables)
+            self._embed_features(params)
             self.label_encoder = LabelEncoder()
             self.X: np.ndarray = self._form_dataset_X()
             self.y: np.ndarray = self._form_dataset_y()
-            # self._save_Xy(save_path)
+            self._save_Xy(save_path)
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
 
     def _construct_logfiles(
             self,
+            params: utils.HyperParams,
             read_paths: List[str],
-            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]],
-            tb_len_threshold: int
+            timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]]
     ):
         """Read all logfiles from paths in the given list"""
         logfiles: List[GNBLogFile] = []
@@ -64,16 +63,16 @@ class GNBDataset(Dataset):
             t.set_postfix({"read_path": "\""+read_paths[idx]+"\""})
             logfiles.append(GNBLogFile(
                     read_paths[idx],
-                    self.feature_map,
+                    {},
                     timetables[idx],
-                    self.window_size,
-                    tb_len_threshold
+                    params.window_size,
+                    params.pca_n_components,
+                    params.tb_len_threshold
             ))
         return logfiles
 
     def _embed_features_naive(self):
         """Processing key_info vector to pure numeric, DEPRECATED"""
-        # TODO: better solution
         for logfile in self.logfiles:
             for sample in logfile.samples:
                 for record in sample.records:
@@ -86,62 +85,46 @@ class GNBDataset(Dataset):
                             except TypeError as _:
                                 pass
 
-    def _embed_features(self):
+    def _embed_features(self, params: utils.HyperParams):
         """Embedding key_info vector to pure numeric, rescale features and extract principal components"""
-        # TODO use pd.dataframe to speed up the processing
-        for cell_id in ["03", "04"]:
-            for channel in self.feature_map.keys():
-                if cell_id == "04" and channel in ["SRS", "PHICH"]:
-                    # TODO: any better idea? same in GNBSample.form_sample_X
-                    continue  # 5G cell does not contain SRS or PHICH records
+        for cell_id in utils.cell_channels.keys():
+            for channel in utils.cell_channels[cell_id]:
                 print("Embedding {:5} channel of {:2} cell...".format(channel, cell_id))
-                records_channel: List[GNBRecord] = []
-                for logfile in self.logfiles:
-                    for record in logfile.records:
-                        if record.basic_info["cell_id"] == cell_id and record.basic_info["channel"] == channel:
-                            records_channel.append(record)
-                raw_infos: np.ndarray = np.array([record.key_info for record in records_channel])
-                indexes_onehot: List[int] = []
-                indexes_minmax: List[int] = []
-                for column in range(raw_infos.shape[1]):
-                    elements_count = len(Counter(raw_infos[:, column]).keys())
-                    if all([utils.is_number(element) for element in raw_infos[:, column]]) and elements_count > 5:
-                        indexes_minmax.append(column)
-                    elif elements_count > 1:
-                        indexes_onehot.append(column)
-                print(indexes_onehot, indexes_minmax)
-                infos_onehot = raw_infos[:, indexes_onehot]
-                if indexes_onehot:
-                    encoder_onehot = OneHotEncoder(sparse_output=False)
-                    infos_onehot = encoder_onehot.fit_transform(infos_onehot)
-                infos_minmax = raw_infos[:, indexes_minmax]
-                if indexes_minmax:
-                    for i in range(infos_minmax.shape[0]):
-                        for j in range(infos_minmax.shape[1]):
-                            infos_minmax[i, j] = eval(infos_minmax[i, j])
-                    encoder_minmax = MinMaxScaler()
-                    infos_minmax = encoder_minmax.fit_transform(infos_minmax)
-                embedded_infos: np.ndarray
-                if indexes_onehot and indexes_minmax:
-                    embedded_infos = np.concatenate((infos_onehot, infos_minmax), axis=1)
-                elif indexes_onehot:
-                    embedded_infos = infos_onehot
-                elif indexes_minmax:
-                    embedded_infos = infos_minmax
-                else:
-                    raise AssertionError("No valid feature found")
-                # TODO get n_components from params.json, same in GNBSample.form_sample_X
-                pca = PCA(n_components=4)
-                embedded_infos = pca.fit_transform(embedded_infos)
+                # dataframe from record.message
+                records_channel = [
+                    record for logfile in self.logfiles for record in logfile.records
+                    if record.basic_info["cell_id"] == cell_id and record.basic_info["channel"] == channel
+                ]
+                # embed
+                df_raw = pd.DataFrame([record.message for record in records_channel])
+                df_raw.fillna(-1)
+                df_embedded = pd.DataFrame()
+                columns_minmax: List[str] = []
+                columns_onehot: List[str] = []
+                for column in df_raw.columns:
+                    try:
+                        df_raw[column] = pd[column].apply(eval)
+                        columns_minmax.append(column)
+                    except (NameError, TypeError, SyntaxError) as _:
+                        columns_onehot.append(column)
+                if columns_minmax:
+                    scaled = pd.DataFrame(MinMaxScaler().fit_transform(df_raw[columns_minmax]))
+                    df_embedded = pd.concat([df_embedded, scaled])
+                if columns_onehot:
+                    encoded = pd.DataFrame(OneHotEncoder(sparse_output=False).fit_transform(df_raw[columns_onehot]))
+                    df_embedded = pd.concat([df_embedded, encoded])
+                # pca
+                pca = PCA(n_components=params.pca_n_components)
+                summarized = pca.fit_transform(df_embedded.to_numpy())
                 for index, record in enumerate(records_channel):
-                    record.embedded_info = embedded_infos[index]
+                    record.embedded_info = summarized[index]
 
     def _form_dataset_X(self) -> np.ndarray:
         """Assemble combined vector for each sample as input to ML/DL models"""
         raw_X: List[np.ndarray] = []
         for logfile in self.logfiles:
             for sample in logfile.samples:
-                raw_X.append(sample.form_sample_X(self.feature_map))
+                raw_X.append(sample.form_sample_X())
         return np.array(raw_X)
 
     def _form_dataset_y(self) -> np.ndarray:
@@ -208,7 +191,8 @@ class GNBDataset(Dataset):
         if not self.re_preprocessed:
             warnings.warn("count_feature_combinations failed as preprocessing bypassed")
             return
-        for channel in self.feature_map.keys():
+        # TODO: better solution? minor details
+        for channel in utils.cell_channels["03"]:
             print(">>", channel)
             combinations: Dict[str, int] = {}
             for logfile in self.logfiles:
@@ -262,11 +246,9 @@ class GNBDataLoaders:
             ],
             generator=torch.Generator().manual_seed(params.random_seed)
         )
-        self.num_features: int = sum(
-            len(self.dataset.feature_map[channel][field])
-            for channel in self.dataset.feature_map.keys()
-            for field in self.dataset.feature_map[channel].keys()
-        )
+        self.num_features: int = params.pca_n_components * sum([
+            len(channels) for channels in utils.cell_channels.values()
+        ])
         self.num_classes: int = len(set(self.dataset.y))
         # TODO: maybe move this to Dataset so that functions in ml.py can use it directly but not calculate again
         self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
@@ -301,3 +283,4 @@ if __name__ == "__main__":
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
         ]]
     )
+    print("END")

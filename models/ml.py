@@ -27,7 +27,7 @@ parser.add_argument("--data_dir", default="../data/NR/1st-example")
 parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-parameter json file
 
 
-def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[str, Dict[str, List[str]]]]:
+def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray]:
     """Read dataset from npz file or preprocess from raw log file"""
     if params.re_preprocess:
         dataset = GNBDataset(
@@ -47,7 +47,7 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray, Dict[st
             read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
     dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
-    return dataset.X, dataset.y, dataset.feature_map
+    return dataset.X, dataset.y
 
 
 def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> Dict[str, any]:
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     params = utils.HyperParams(json_path=os.path.join(args.experiment_dir, "params.json"))
     utils.set_logger(log_path=os.path.join(args.experiment_dir, "ml.log"))
     logging.info("Loading data...")
-    X, y, feature_map = get_data(params=params)
+    X, y = get_data(params=params)
     logging.info("Comparing ML models...")
     models = model_selection(X, y, params=params)
     # logging.info("Evaluating LightGBM model feature importance...")

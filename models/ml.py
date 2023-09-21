@@ -149,7 +149,7 @@ def lgb_feature_importance(
         feature_map: Dict[str, Dict[str, List[str]]],
         params: utils.HyperParams
 ) -> Dict[str, int]:
-    """Evaluate relative feature importance according to LightGBM classifier"""
+    """Evaluate relative feature importance according to LightGBM classifier and feature map, DEPRECATED"""
     importance = model.feature_importances_
     num_features = sum(
         len(feature_map[channel][field]) for channel in feature_map.keys() for field in feature_map[channel].keys()
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     models = model_selection(X, y, params=params)
     # logging.info("Evaluating LightGBM model feature importance...")
     # lgb_feature_importance(model=models["lgb"], feature_map=feature_map, params=params)
-    # logging.info("Tuning hyperparameters for LightGBM...")
-    # lgb_best_model = lgb_tuning(X, y, params=params)
+    logging.info("Tuning hyperparameters for LightGBM...")
+    lgb_best_model = lgb_tuning(X, y, params=params)
     # logging.info("Evaluating fine-tuned LightGBM model feature importance...")
     # lgb_feature_importance(model=lgb_best_model, feature_map=feature_map, params=params)

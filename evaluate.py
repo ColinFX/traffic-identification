@@ -46,11 +46,14 @@ def evaluate(
         # core pipeline
         eval_batch, true_labels_batch = next(data_iterator)
         if params.cuda_index > -1:
-            eval_batch.cuda(device=torch.device(params.cuda_index))
+            eval_batch = eval_batch.cuda(device=torch.device(params.cuda_index))
         predicted_proba_batch = model(eval_batch)
+        predicted_proba_batch = predicted_proba_batch.detach().cpu()
         eval_loss = loss_fn(predicted_proba_batch, true_labels_batch)
 
         # evaluate all metrics on every batch
+        predicted_proba_batch = predicted_proba_batch.numpy()
+        true_labels_batch = true_labels_batch.detach().cpu().numpy()
         batch_summary = {metric: metrics[metric](predicted_proba_batch, true_labels_batch) for metric in metrics}
         batch_summary["eval_loss"] = eval_loss.item()
         summary.append(batch_summary)

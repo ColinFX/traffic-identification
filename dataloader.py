@@ -1,5 +1,3 @@
-import logging
-from collections import Counter
 import datetime
 import json
 import os.path
@@ -16,7 +14,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder
 
 import utils
-from preprocess import GNBLogFile, GNBRecord
+from preprocess import GNBLogFile
 
 
 class GNBDataset(Dataset):
@@ -41,7 +39,6 @@ class GNBDataset(Dataset):
             self.y: np.ndarray = Xy["y"]
         elif read_log_paths and timetables:
             self.re_preprocessed: bool = True
-            self.window_size = params.window_size
             self.logfiles: List[GNBLogFile] = self._construct_logfiles(params, read_log_paths, timetables)
             self._embed_features(params)
             self.label_encoder = LabelEncoder()
@@ -87,44 +84,46 @@ class GNBDataset(Dataset):
 
     def _embed_features(self, params: utils.HyperParams):
         """Embedding key_info vector to pure numeric, rescale features and extract principal components"""
-        for cell_id in utils.cell_channels.keys():
-            for channel in utils.cell_channels[cell_id]:
-                print("Embedding {:5} channel of {:2} cell...".format(channel, cell_id))
-                # dataframe from record.message
-                records_channel = [
-                    record for logfile in self.logfiles for record in logfile.records
-                    if record.basic_info["cell_id"] == cell_id and record.basic_info["channel"] == channel
-                ]
-                # embed
-                df_raw = pd.DataFrame([record.message for record in records_channel])
-                df_raw.fillna(-1)
-                df_embedded = pd.DataFrame()
-                columns_minmax: List[str] = []
-                columns_onehot: List[str] = []
-                for column in df_raw.columns:
-                    try:
-                        df_raw[column] = pd[column].apply(eval)
-                        columns_minmax.append(column)
-                    except (NameError, TypeError, SyntaxError) as _:
-                        columns_onehot.append(column)
-                if columns_minmax:
-                    scaled = pd.DataFrame(MinMaxScaler().fit_transform(df_raw[columns_minmax]))
-                    df_embedded = pd.concat([df_embedded, scaled])
-                if columns_onehot:
-                    encoded = pd.DataFrame(OneHotEncoder(sparse_output=False).fit_transform(df_raw[columns_onehot]))
-                    df_embedded = pd.concat([df_embedded, encoded])
-                # pca
-                pca = PCA(n_components=params.pca_n_components)
-                summarized = pca.fit_transform(df_embedded.to_numpy())
-                for index, record in enumerate(records_channel):
-                    record.embedded_info = summarized[index]
+        cell_channel_tuples = [
+            (cell_id, channel) for cell_id in utils.cell_channels.keys() for channel in utils.cell_channels[cell_id]
+        ]
+        for cell_id, channel in (t := tqdm.tqdm(cell_channel_tuples)):
+            t.set_postfix({"cell_id": cell_id, "channel": channel})
+            # dataframe from record.message
+            records_channel = [
+                record for logfile in self.logfiles for record in logfile.records
+                if record.basic_info["cell_id"] == cell_id and record.basic_info["channel"] == channel
+            ]
+            # embed
+            df_raw = pd.DataFrame([record.message for record in records_channel])
+            df_raw.fillna(-1)
+            df_embedded = pd.DataFrame()
+            columns_minmax: List[str] = []
+            columns_onehot: List[str] = []
+            for column in df_raw.columns:
+                try:
+                    df_raw[column] = pd[column].apply(eval)
+                    columns_minmax.append(column)
+                except (NameError, TypeError, SyntaxError) as _:
+                    columns_onehot.append(column)
+            if columns_minmax:
+                scaled = pd.DataFrame(MinMaxScaler().fit_transform(df_raw[columns_minmax]))
+                df_embedded = pd.concat([df_embedded, scaled])
+            if columns_onehot:
+                encoded = pd.DataFrame(OneHotEncoder(sparse_output=False).fit_transform(df_raw[columns_onehot]))
+                df_embedded = pd.concat([df_embedded, encoded])
+            # pca
+            pca = PCA(n_components=params.pca_n_components)
+            summarized = pca.fit_transform(df_embedded.to_numpy())
+            for index, record in enumerate(records_channel):
+                record.embedded_info = summarized[index]
 
     def _form_dataset_X(self) -> np.ndarray:
         """Assemble combined vector for each sample as input to ML/DL models"""
         raw_X: List[np.ndarray] = []
         for logfile in self.logfiles:
             for sample in logfile.samples:
-                raw_X.append(sample.form_sample_X())
+                raw_X.append(sample.form_sample_X_CNN())  # TODO CONFIG HERE, better approaches？
         return np.array(raw_X)
 
     def _form_dataset_y(self) -> np.ndarray:
@@ -274,13 +273,24 @@ if __name__ == "__main__":
     # dl.dataset.count_feature_combinations()
 
     params = utils.HyperParams(json_path="experiments/base/params.json")
-    dataset = GNBDataset(
+    # dataset = GNBDataset(
+    #     params=params,
+    #     feature_path="experiments/base/features.json",
+    #     read_log_paths=["data/NR/1st-example/gnb0.log"],
+    #     timetables=[[
+    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+    #     ]]
+    # )
+    dataloaders = GNBDataLoaders(
         params=params,
-        feature_path="experiments/base/features.json",
+        feature_path="",
         read_log_paths=["data/NR/1st-example/gnb0.log"],
         timetables=[[
             ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
             ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]]
+        ]],
+        save_path="",
+        read_npz_path=""
     )
     print("END")

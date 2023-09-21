@@ -9,7 +9,8 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from models.transformer import TransformerClassifier, loss_fn, metrics
+# from models.transformer import TransformerClassifier, loss_fn, metrics
+from models.cnn import CNNClassifier, loss_fn, metrics
 import utils
 from evaluate import evaluate
 from dataloader import GNBDataLoaders
@@ -50,9 +51,9 @@ def train_epoch(
         train_batch, true_labels_batch = next(data_iterator)
         if params.cuda_index > -1:
             # TODO: write meaning of this variable to doc
-            train_batch.cuda(device=torch.device(params.cuda_index))
-            true_labels_batch.cuda(device=torch.device(params.cuda_index))
-        predicted_proba_batch = model(train_batch)
+            train_batch = train_batch.cuda(device=torch.device(params.cuda_index))
+            true_labels_batch = true_labels_batch.cuda(device=torch.device(params.cuda_index))
+        predicted_proba_batch: torch.Tensor = model(train_batch)
         train_loss = loss_fn(predicted_proba_batch, true_labels_batch)
         optimizer.zero_grad()
         train_loss.backward()
@@ -60,6 +61,8 @@ def train_epoch(
 
         # evaluate summaries once in a while within one epoch
         if step % params.save_summary_steps == 0:
+            predicted_proba_batch = predicted_proba_batch.detach().cpu().numpy()
+            true_labels_batch = true_labels_batch.detach().cpu().numpy()
             batch_summary = {metric: metrics[metric](predicted_proba_batch, true_labels_batch) for metric in metrics}
             batch_summary["train_loss"] = train_loss.item()
             summary.append(batch_summary)
@@ -189,16 +192,12 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    transformer = TransformerClassifier(
-        params=params,
-        embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
-        num_classes=dataloaders.num_classes
-    )
+    classifier = CNNClassifier()
     if params.cuda_index > -1:
-        transformer.cuda(device=torch.device(params.cuda_index))
-    optimizer = torch.optim.Adam(transformer.parameters(), lr=params.learning_rate)
+        classifier.cuda(device=torch.device(params.cuda_index))
+    optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate)
     train(
-        model=transformer,
+        model=classifier,
         optimizer=optimizer,
         loss_fn=loss_fn,
         train_dataloader=train_dataloader,
@@ -207,3 +206,21 @@ if __name__ == "__main__":
         params=params,
         experiment_dir=args.experiment_dir
     )
+    # transformer = TransformerClassifier(
+    #     params=params,
+    #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
+    #     num_classes=dataloaders.num_classes
+    # )
+    # if params.cuda_index > -1:
+    #     transformer.cuda(device=torch.device(params.cuda_index))
+    # optimizer = torch.optim.Adam(transformer.parameters(), lr=params.learning_rate)
+    # train(
+    #     model=transformer,
+    #     optimizer=optimizer,
+    #     loss_fn=loss_fn,
+    #     train_dataloader=train_dataloader,
+    #     val_dataloader=val_dataloader,
+    #     metrics=metrics,
+    #     params=params,
+    #     experiment_dir=args.experiment_dir
+    # )

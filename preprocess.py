@@ -222,6 +222,32 @@ class GNBSample:
                 raw_X.append(raw_X_subframe)
         return np.array(raw_X)
 
+    def form_sample_X_CNN(self):
+        """Construct image-like array as input to CNN classifier"""
+        raw_X: List[List[float]] = []
+        for frame in range(self.frame_cycle * self.window_size, (self.frame_cycle+1) * self.window_size):
+            for subframe in range(10):
+                for cell_id, slot in [("03", 0), ("04", 0), ("04", 1)]:
+                    if cell_id == "04":
+                        subframe = 2 * subframe + slot
+                    raw_X_subframe: List[float] = []
+                    for channel in utils.cell_channels["04"]:
+                        channel_in_subframe_flag = False
+                        for record in self.records:
+                            if (
+                                record.basic_info["channel"] == channel and
+                                record.basic_info["cell_id"] == cell_id and
+                                int(record.basic_info["frame"]) == frame and
+                                int(record.basic_info["subframe"]) == subframe
+                            ):
+                                channel_in_subframe_flag = True
+                                raw_X_subframe.extend(record.embedded_info)
+                                break
+                        if not channel_in_subframe_flag:
+                            raw_X_subframe.extend([0] * self.pca_n_components)
+                    raw_X.append(raw_X_subframe)
+        return np.array(raw_X)
+
 
 class GNBLogFile:
     def __init__(

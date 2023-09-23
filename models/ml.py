@@ -60,12 +60,12 @@ def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> 
     )
     models = {
         "sgd": SGDClassifier(),
-        "svc": SVC(),
-        "rf": RandomForestClassifier(),
-        "mlp": MLPClassifier(),
-        "tree": ExtraTreeClassifier(),
-        "xgb": XGBClassifier(),
-        "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
+        # "svc": SVC(),
+        # "rf": RandomForestClassifier(),
+        # "mlp": MLPClassifier(),
+        # "tree": ExtraTreeClassifier(),
+        # "xgb": XGBClassifier(),
+        # "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
         "lgb": lgb.LGBMClassifier()
     }
     for model_name in models.keys():
@@ -80,7 +80,9 @@ def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> 
         logging.info("Testing of model {} over {} records completed in {} seconds".format(
             model_name, y_test.shape[0], time.time() - test_start
         ))
-        logging.info(">> {:<3} {:.4f}".format(model_name, accuracy_score(y_test, y_test_pred)))
+        logging.info(">> {:<3} {:.4f} {:.4f}".format(
+            model_name, accuracy_score(y_test, y_test_pred), log_loss(y_test, y_test_pred)
+        ))
         logging.info(confusion_matrix(y_test, y_test_pred))
     return models
 
@@ -181,7 +183,7 @@ if __name__ == "__main__":
     models = model_selection(X, y, params=params)
     # logging.info("Evaluating LightGBM model feature importance...")
     # lgb_feature_importance(model=models["lgb"], feature_map=feature_map, params=params)
-    logging.info("Tuning hyperparameters for LightGBM...")
-    lgb_best_model = lgb_tuning(X, y, params=params)
+    # logging.info("Tuning hyperparameters for LightGBM...")
+    # lgb_best_model = lgb_tuning(X, y, params=params)
     # logging.info("Evaluating fine-tuned LightGBM model feature importance...")
     # lgb_feature_importance(model=lgb_best_model, feature_map=feature_map, params=params)

@@ -1,10 +1,10 @@
 {
-  "batch_size": 64,
+  "batch_size": 32,
   "cuda_index": 0,
   "expansion_factor": 4,
-  "learning_rate": 0.001,
+  "learning_rate": 0.0005,
   "n_heads": 4,
-  "num_epochs": 200,
+  "num_epochs": 300,
   "num_layers": 2,
   "pca_n_components": 20,
   "random_seed": 17,

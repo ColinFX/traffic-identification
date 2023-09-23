@@ -102,16 +102,16 @@ if __name__ == "__main__":
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    transformer = TransformerClassifier(
+    classifier = TransformerClassifier(
         params=params,
         embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper, save as in train.py
         num_classes=dataloaders.num_classes
     )
     if params.cuda_index > -1:
-        transformer.cuda(device=torch.device(params.cuda_index))
-    utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), transformer)
+        classifier.cuda(device=torch.device(params.cuda_index))
+    utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), classifier)
     test_metrics = evaluate(
-        model=transformer,
+        model=classifier,
         loss_fn=loss_fn,
         data_iterator=iter(test_data_loader),  # TODO: rename disgusting data_loader to dataloader
         metrics=metrics,

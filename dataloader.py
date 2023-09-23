@@ -123,7 +123,7 @@ class GNBDataset(Dataset):
         raw_X: List[np.ndarray] = []
         for logfile in self.logfiles:
             for sample in logfile.samples:
-                raw_X.append(sample.form_sample_X_CNN())  # TODO CONFIG HERE, better approaches？
+                raw_X.append(sample.form_sample_X())  # TODO CONFIG HERE, better approaches？
         return np.array(raw_X)
 
     def _form_dataset_y(self) -> np.ndarray:

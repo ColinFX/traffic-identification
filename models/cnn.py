@@ -9,11 +9,14 @@ import utils
 class CNNClassifier(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=0)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=0)
         self.mp1 = nn.MaxPool2d(kernel_size=2, padding=0)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=0)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=0)
         self.mp2 = nn.MaxPool2d(kernel_size=2, padding=0)
-        self.fc1 = nn.Linear(in_features=32*4*17, out_features=2)
+        self.fc1 = nn.Linear(in_features=32*6*18, out_features=2)
+        # self.conv3 = nn.Conv2d(in_channels=32, out_channels=16, kernel_size=5, stride=1, padding=0)
+        # self.mp3 = nn.MaxPool2d(kernel_size=2, padding=0)
+        # self.fc1 = nn.Linear(in_features=112, out_features=2)
 
     def forward(self, data_batch: torch.Tensor) -> torch.Tensor:
         """
@@ -24,13 +27,20 @@ class CNNClassifier(nn.Module):
         """
         # input: batch_size * 30 * 80
         data_batch = data_batch.view((data_batch.shape[0], 1, 30, 80))  # batch_size * 1 * 30 * 80
+
         data_batch = self.conv1(data_batch)  # batch_size * 16 * 26 * 76
         data_batch = F.relu(data_batch)
         data_batch = self.mp1(data_batch)  # batch_size * 16 * 13 * 38
+
         data_batch = self.conv2(data_batch)  # batch_size * 32 * 9 * 34
         data_batch = F.relu(data_batch)
         data_batch = self.mp2(data_batch)  # batch_size * 32 * 4 * 17
-        data_batch = data_batch.view(-1, 32*4*17)  # batch_size * 32*4*17
+
+        # data_batch = self.conv3(data_batch)
+        # data_batch = F.relu(data_batch)
+        # data_batch = self.mp3(data_batch)
+
+        data_batch = data_batch.view(data_batch.shape[0], -1)  # batch_size * 32*4*17
         data_batch = self.fc1(data_batch)  # batch_size * 2
         data_batch = F.softmax(data_batch, dim=1)
         return data_batch  # output: batch_size * 2

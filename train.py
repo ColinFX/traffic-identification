@@ -10,7 +10,8 @@ from torch.utils.data import DataLoader
 from tqdm import trange
 
 # from models.transformer import TransformerClassifier, loss_fn, metrics
-from models.cnn import CNNClassifier, loss_fn, metrics
+# from models.cnn import CNNClassifier, loss_fn, metrics
+from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
 import utils
 from evaluate import evaluate
 from dataloader import GNBDataLoaders
@@ -192,7 +193,12 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    classifier = CNNClassifier()
+    classifier = LSTMClassifier()  # TODO CONFIG HERE
+    # transformer = TransformerClassifier(
+    #     params=params,
+    #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
+    #     num_classes=dataloaders.num_classes
+    # )
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
     optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate)
@@ -206,21 +212,3 @@ if __name__ == "__main__":
         params=params,
         experiment_dir=args.experiment_dir
     )
-    # transformer = TransformerClassifier(
-    #     params=params,
-    #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
-    #     num_classes=dataloaders.num_classes
-    # )
-    # if params.cuda_index > -1:
-    #     transformer.cuda(device=torch.device(params.cuda_index))
-    # optimizer = torch.optim.Adam(transformer.parameters(), lr=params.learning_rate)
-    # train(
-    #     model=transformer,
-    #     optimizer=optimizer,
-    #     loss_fn=loss_fn,
-    #     train_dataloader=train_dataloader,
-    #     val_dataloader=val_dataloader,
-    #     metrics=metrics,
-    #     params=params,
-    #     experiment_dir=args.experiment_dir
-    # )

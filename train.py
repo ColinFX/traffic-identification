@@ -153,6 +153,8 @@ def train(
 
     return best_metrics
 
+    # TODO: plot loss during the training after finished
+
 
 if __name__ == "__main__":
     """Train the models on the train and validation set"""

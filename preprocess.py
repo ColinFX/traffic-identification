@@ -6,8 +6,78 @@ import re
 from typing import Dict, List, Match, Pattern, Tuple
 
 import numpy as np
+import tqdm
 
 import utils
+
+
+class SRSENBRecord:
+    def __init__(self, raw_record: List[str]):
+        self.raw_record = raw_record
+        match: Match = re.match(
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})\s\[([A-Z0-9]+)\s*]\s\[([A-Z])]\s(.*)',
+            self.raw_record[0]
+        )
+        self.datetime: datetime.datetime = datetime.datetime.fromisoformat(match.groups()[0])
+        self.layer: str = match.groups()[1]
+        self.log_level: str = match.groups()[2]
+        self.raw_info: str = match.groups()[3]
+        self.basic_info: Dict[str, str]
+        self.message: Dict[str, str]
+        self.basic_info, self.message = self._extract_info_message()
+        self._reformat_values()
+        self.label: str = ""
+        self.embedded_info: np.ndarray = np.empty([])
+
+    @abc.abstractmethod
+    def _extract_info_message(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        return {}, {}
+
+    def _reformat_values(self):
+        for key in self.message.copy().keys():
+            if key == "rb":
+                match1: Match = re.match(r'\((\d+),(\d+)\)', self.message[key])
+                self.message["rb_start"] = match1.groups()[0]
+                self.message["rb_end"] = match1.groups()[1]
+                self.message["rb_len"] = str(int(match1.groups()[1]) - int(match1.groups()[0]))
+                del self.message["rb"]
+            else:
+                match1: Match = re.match(r'([+\-.\d]+)\s([a-zA-Z]+)', self.message[key])
+                if match1:
+                    self.message[key] = match1.groups()[0]
+                match2: Match = re.match(r'\{(.+)}', self.message[key])
+                if match2:
+                    self.message[key] = match2.groups()[0]
+
+    def get_record_label(self, timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]]) -> str:
+        """Get ground truth label from given `timetable` for one `record`"""
+        for range_, label in timetable:
+            if range_[0] <= self.datetime < range_[1]:
+                return label
+        return ""
+
+
+class SRSENBRecordPHY(SRSENBRecord):
+    def __init__(self, raw_record: List[str]):
+        super().__init__(raw_record)
+
+    def _extract_info_message(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        basic_info: Dict[str, str] = {}
+        message: Dict[str, str] = {}
+        match: Match = re.match(r'\[\s*(\d+)]\s([A-Z]+):\s(.*)', self.raw_info)
+        basic_info["subframe"] = match.groups()[0]
+        basic_info["channel"] = match.groups()[1]
+        remaining_string = match.groups()[2].replace(';', ',')
+        remaining_string = re.sub(r'\s\(cc=\d\)', '', remaining_string)
+        parts = remaining_string.split(', ')
+        for part in parts:
+            sub_parts = part.split("=")
+            if len(sub_parts) == 2:
+                if sub_parts[0] in ["cc", "rnti"]:
+                    basic_info[sub_parts[0]] = sub_parts[1]
+                else:
+                    message[sub_parts[0]] = sub_parts[1]
+        return basic_info, message
 
 
 class GNBRecord:
@@ -66,7 +136,7 @@ class GNBRecord:
         for range_, label in timetable:
             if range_[0] <= self.time < range_[1]:
                 return label
-        return "noise"
+        return ""
 
 
 class GNBRecordPHY(GNBRecord):
@@ -135,6 +205,39 @@ class GNBRecordGTPU(GNBRecord):
                 key, value = line.split(": ", 1)
                 long_message[key] = value
         return long_message
+
+
+class SRSENBSample:
+    def __init__(
+            self,
+            records: List[SRSENBRecord],
+            period: int,
+            frame_cycle: int,
+            window_size: int
+    ):
+        self.records = records
+        self.period = period
+        self.frame_cycle = frame_cycle
+        self.window_size = window_size
+        self.tb_len: int = self._count_tb_len()
+        self.label: str = self._get_sample_label()
+
+    def _count_tb_len(self) -> int:
+        tb_len_sum: int = 0
+        for record in self.records:
+            if "tbs" in record.message.keys():
+                tb_len_sum += int(record.message["tbs"])
+        return tb_len_sum
+
+    def _get_sample_label(self) -> str:
+        """Get label for each newly formed sample by majority voting of records"""
+        voting: Dict[str, int] = {}
+        for record in self.records:
+            if record.label in voting.keys():
+                voting[record.label] += 1
+            else:
+                voting[record.label] = 1
+        return max(voting, key=voting.get)
 
 
 class GNBSample:
@@ -247,6 +350,125 @@ class GNBSample:
                             raw_X_subframe.extend([0] * self.pca_n_components)
                     raw_X.append(raw_X_subframe)
         return np.array(raw_X)
+
+
+class SRSENBLogFile:
+    def __init__(
+            self,
+            read_path: str,
+            timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]],
+            window_size: int,
+            tbs_threshold: int
+    ):
+        """
+        Read log from `read_path` and save preprocessed physical layer data records for ML/DL models,
+        equivalent to GNBLogFile, see functions with same name for more information
+        """
+        with open(read_path, 'r') as f:
+            self.lines: List[str] = f.readlines()
+
+        self.records: List[SRSENBRecord] = []
+        t = tqdm.tqdm(self.lines)
+        t.set_postfix({"read_path": read_path})
+        for line in t:
+            self.records.append(self._reformat_record(line))
+
+        # self.records: List[SRSENBRecord] = [self._reformat_record(line) for line in self.lines]
+        self.begin_datetime = self.records[0].datetime
+        self.end_datetime = self.records[-1].datetime
+        print(self.begin_datetime, self.end_datetime)
+        self._filter_phy_drb_records()
+        self._add_record_periods()
+        self._add_record_labels(timetable)
+        self._trim_beginning_end()
+        self.samples: List[SRSENBSample] = self._regroup_records(window_size)
+        self._filter_samples(tbs_threshold)
+
+    @staticmethod
+    def _reformat_record(raw_record: str) -> SRSENBRecord:
+        if "[PHY" in raw_record:
+            if ": " in raw_record:
+                return SRSENBRecordPHY([raw_record])
+            else:
+                record = SRSENBRecord([raw_record])
+                record.layer = "phy"
+                return record
+        else:
+            return SRSENBRecord([raw_record])
+
+    def _filter_phy_drb_records(self):
+        filtered_records: List[SRSENBRecord] = []
+        drb_flag: bool = False
+        for record in self.records:
+            if "RLC" in record.layer:
+                if "DRB" in record.raw_info:
+                    drb_flag = True
+                elif "SRB" in record.raw_info:
+                    drb_flag = False
+            elif "PHY" in record.layer:
+                if drb_flag:
+                    filtered_records.append(record)
+        self.records = filtered_records
+
+    def _add_record_periods(self):
+        current_period = 0
+        last_subframe = 0
+        for record in self.records:
+            if int(record.basic_info["subframe"]) < last_subframe:
+                current_period += 1
+            record.basic_info["period"] = str(current_period)
+            last_subframe = int(record.basic_info["subframe"])
+
+    def _add_record_labels(
+            self,
+            timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]],
+            delete_noise: bool = True
+    ):
+        for idx, record in enumerate(self.records):
+            label = record.get_record_label(timetable)
+            record.label = label
+            if delete_noise and not record.label:
+                del self.records[idx]
+
+    def _trim_beginning_end(
+            self,
+            delta: datetime.timedelta = datetime.timedelta(seconds=60)
+    ):
+        trimmed_records: List[SRSENBRecord] = []
+        for record in self.records:
+            if self.begin_datetime + delta < record.datetime < self.end_datetime - delta:
+                trimmed_records.append(record)
+        self.records = trimmed_records
+
+    def _regroup_records(self, window_size: int) -> List[SRSENBSample]:
+        samples: List[SRSENBSample] = []
+        current_period = -1
+        current_frame_cycle = -1
+        current_sample_records: List[SRSENBRecord] = []
+        for record in self.records:
+            if (
+                int(record.basic_info["period"]) == current_period and
+                int(record.basic_info["subframe"]) // 10 // window_size == current_frame_cycle
+            ):
+                current_sample_records.append(record)
+            else:
+                if current_sample_records:
+                    samples.append(
+                        SRSENBSample(current_sample_records, current_period, current_frame_cycle, window_size)
+                    )
+                current_sample_records = [record]
+                current_period = int(record.basic_info["period"])
+                current_frame_cycle = int(record.basic_info["subframe"]) // 10 // window_size
+        if current_sample_records:
+            samples.append(SRSENBSample(current_sample_records, current_period, current_frame_cycle, window_size))
+        return samples
+
+    def _filter_samples(self, threshold: int):
+        filtered_samples: List[SRSENBSample] = []
+        for sample in self.samples:
+            if sample.tb_len >= threshold and sample.label:
+                filtered_samples.append(sample)
+        self.samples = filtered_samples
 
 
 class GNBLogFile:
@@ -412,7 +634,7 @@ class GNBLogFile:
         """Keep only samples with enough data transmitted and meaningful label"""
         filtered_samples: List[GNBSample] = []
         for sample in self.samples:
-            if sample.tb_len >= threshold and sample.label != "noise":
+            if sample.tb_len >= threshold and sample.label:
                 filtered_samples.append(sample)
         self.samples = filtered_samples
 
@@ -444,17 +666,39 @@ class GNBLogFile:
 
 
 if __name__ == "__main__":
-    """Unit test of GNBLogFile"""
-    logfile = GNBLogFile(
-        read_path="data/NR/1st-example/gnb0.log",
-        feature_map=utils.get_feature_map("experiments/base/features.json"),
-        timetable=[
-            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ],
+    # """Unit test of GNBLogFile"""
+    # logfile = GNBLogFile(
+    #     read_path="data/NR/1st-example/gnb0.log",
+    #     feature_map=utils.get_feature_map("experiments/base/features.json"),
+    #     timetable=[
+    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+    #     ],
+    #     window_size=1,
+    #     pca_n_components=4,
+    #     tb_len_threshold=150
+    # )
+    # logfile.export_json(save_path="data/NR/1st-example/export.json")
+    # logfile.export_csv(save_path="data/NR/1st-example/export.csv")
+
+    """Unit test of SRSENBLogFile"""
+    logfile = SRSENBLogFile(
+        read_path="data/srsRAN/srsenb0926/enb_qqmusic_standard.log",
+        timetable=[(
+            (
+                (datetime.datetime(2023, 9, 26, 0, 0)),
+                (datetime.datetime(2023, 9, 26, 23, 59))
+            ),
+            "wget_anaconda"
+        )],
         window_size=1,
-        pca_n_components=4,
-        tb_len_threshold=150
+        tbs_threshold=100
     )
-    logfile.export_json(save_path="data/NR/1st-example/export.json")
-    logfile.export_csv(save_path="data/NR/1st-example/export.csv")
+    channel_count = {}
+    for record in logfile.records:
+        if record.basic_info["channel"] in channel_count:
+            channel_count[record.basic_info["channel"]] += 1
+        else:
+            channel_count[record.basic_info["channel"]] = 1
+    print(channel_count)
+    print("END")

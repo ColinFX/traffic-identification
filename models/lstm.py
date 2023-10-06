@@ -9,12 +9,12 @@ import utils
 class LSTMClassifier(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lstm = nn.LSTM(input_size=280, hidden_size=256, num_layers=5, batch_first=True)
+        self.lstm = nn.LSTM(input_size=280, hidden_size=256, num_layers=3, batch_first=True)
         self.fc1 = nn.Linear(in_features=256, out_features=2)
 
     def forward(self, data_batch: torch.Tensor) -> torch.Tensor:
-        h0 = torch.zeros(5, data_batch.shape[0], 256).to(device=data_batch.device)
-        c0 = torch.zeros(5, data_batch.shape[0], 256).to(device=data_batch.device)
+        h0 = torch.zeros(3, data_batch.shape[0], 256).to(device=data_batch.device)
+        c0 = torch.zeros(3, data_batch.shape[0], 256).to(device=data_batch.device)
         data_batch, _ = self.lstm(data_batch, (h0, c0))
         data_batch = self.fc1(data_batch[:, -1, :])
         return data_batch

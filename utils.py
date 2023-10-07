@@ -159,7 +159,10 @@ def is_number(string: str) -> bool:
         return False
 
 
-cell_channels: Dict[str, List[str]] = {
+SRSENB_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
+
+
+GNB_cell_channels: Dict[str, List[str]] = {
     "03": ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "SRS", "PHICH"],
     "04": ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
 }

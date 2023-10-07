@@ -13,44 +13,42 @@ import utils
 
 class SRSENBRecord:
     def __init__(self, raw_record: List[str]):
-        self.raw_record = raw_record
         match: Match = re.match(
             r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})\s\[([A-Z0-9]+)\s*]\s\[([A-Z])]\s(.*)',
-            self.raw_record[0]
+            raw_record[0]
         )
         self.datetime: datetime.datetime = datetime.datetime.fromisoformat(match.groups()[0])
         self.layer: str = match.groups()[1]
         self.log_level: str = match.groups()[2]
-        self.raw_info: str = match.groups()[3]
         self.basic_info: Dict[str, str]
         self.message: Dict[str, str]
-        self.basic_info, self.message = self._extract_info_message()
+        self.basic_info, self.message = self._extract_info_message(match.groups()[3])
         self._reformat_values()
         self.label: str = ""
         self.embedded_info: np.ndarray = np.empty([])
 
+    @staticmethod
     @abc.abstractmethod
-    def _extract_info_message(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+    def _extract_info_message(raw_info: str) -> Tuple[Dict[str, str], Dict[str, str]]:
         return {}, {}
 
     def _reformat_values(self):
         for key in self.message.copy().keys():
             if key == "rb":
-                match1: Match = re.match(r'\((\d+),(\d+)\)', self.message[key])
-                self.message["rb_start"] = match1.groups()[0]
-                self.message["rb_end"] = match1.groups()[1]
-                self.message["rb_len"] = str(int(match1.groups()[1]) - int(match1.groups()[0]))
+                match_rb: Match = re.match(r'\((\d+),(\d+)\)', self.message[key])
+                self.message["rb_start"] = match_rb.groups()[0]
+                self.message["rb_end"] = match_rb.groups()[1]
+                self.message["rb_len"] = str(int(match_rb.groups()[1]) - int(match_rb.groups()[0]))
                 del self.message["rb"]
             else:
-                match1: Match = re.match(r'([+\-.\d]+)\s([a-zA-Z]+)', self.message[key])
-                if match1:
-                    self.message[key] = match1.groups()[0]
-                match2: Match = re.match(r'\{(.+)}', self.message[key])
-                if match2:
-                    self.message[key] = match2.groups()[0]
+                match_unit: Match = re.match(r'([+\-.\d]+)\s([a-zA-Z]+)', self.message[key])
+                if match_unit:
+                    self.message[key] = match_unit.groups()[0]
+                match_brace: Match = re.match(r'\{(.+)}', self.message[key])
+                if match_brace:
+                    self.message[key] = match_brace.groups()[0]
 
     def get_record_label(self, timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]]) -> str:
-        """Get ground truth label from given `timetable` for one `record`"""
         for range_, label in timetable:
             if range_[0] <= self.datetime < range_[1]:
                 return label
@@ -58,13 +56,11 @@ class SRSENBRecord:
 
 
 class SRSENBRecordPHY(SRSENBRecord):
-    def __init__(self, raw_record: List[str]):
-        super().__init__(raw_record)
-
-    def _extract_info_message(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+    @staticmethod
+    def _extract_info_message(raw_info: str) -> Tuple[Dict[str, str], Dict[str, str]]:
         basic_info: Dict[str, str] = {}
         message: Dict[str, str] = {}
-        match: Match = re.match(r'\[\s*(\d+)]\s([A-Z]+):\s(.*)', self.raw_info)
+        match: Match = re.match(r'\[\s*(\d+)]\s([A-Z]+):\s(.*)', raw_info)
         basic_info["subframe"] = match.groups()[0]
         basic_info["channel"] = match.groups()[1]
         remaining_string = match.groups()[2].replace(';', ',')
@@ -78,6 +74,17 @@ class SRSENBRecordPHY(SRSENBRecord):
                 else:
                     message[sub_parts[0]] = sub_parts[1]
         return basic_info, message
+
+
+class SRSENBRecordRLC(SRSENBRecord):
+    @staticmethod
+    def _extract_info_message(raw_info: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+        if "DRB" in raw_info:
+            return {"type": "DRB"}, {}
+        elif "SRB" in raw_info:
+            return {"type": "SRB"}, {}
+        else:
+            return {"type": ""}, {}
 
 
 class GNBRecord:
@@ -239,6 +246,28 @@ class SRSENBSample:
                 voting[record.label] = 1
         return max(voting, key=voting.get)
 
+    def form_sample_X(self, channel_n_components: Dict[str, int]):
+        raw_X: List[List[int or float]] = []
+        for subframe in range(
+                self.frame_cycle * self.window_size * 10,
+                (self.frame_cycle+1) * self.window_size * 10
+        ):
+            raw_X_subframe: List[float] = []
+            for channel in channel_n_components.keys():
+                channel_in_subframe_flag = False
+                for record in self.records:
+                    if (
+                        record.basic_info["channel"] == channel and
+                        int(record.basic_info["subframe"]) == subframe
+                    ):
+                        channel_in_subframe_flag = True
+                        raw_X_subframe.extend(record.embedded_info)
+                        break
+                if not channel_in_subframe_flag:
+                    raw_X_subframe.extend([0] * channel_n_components[channel])
+            raw_X.append(raw_X_subframe)
+        return np.array(raw_X)
+
 
 class GNBSample:
     def __init__(
@@ -308,7 +337,7 @@ class GNBSample:
                 for cell_id, slot in [("03", 0), ("04", 0), ("04", 1)]:
                     if cell_id == "04":
                         subframe = 2 * subframe + slot
-                    for channel in utils.cell_channels[cell_id]:
+                    for channel in utils.GNB_cell_channels[cell_id]:
                         channel_in_subframe_flag = False
                         for record in self.records:
                             if (
@@ -334,7 +363,7 @@ class GNBSample:
                     if cell_id == "04":
                         subframe = 2 * subframe + slot
                     raw_X_subframe: List[float] = []
-                    for channel in utils.cell_channels["04"]:
+                    for channel in utils.GNB_cell_channels["04"]:
                         channel_in_subframe_flag = False
                         for record in self.records:
                             if (
@@ -360,23 +389,15 @@ class SRSENBLogFile:
             window_size: int,
             tbs_threshold: int
     ):
-        """
-        Read log from `read_path` and save preprocessed physical layer data records for ML/DL models,
-        equivalent to GNBLogFile, see functions with same name for more information
-        """
         with open(read_path, 'r') as f:
-            self.lines: List[str] = f.readlines()
-
+            lines: List[str] = f.readlines()
         self.records: List[SRSENBRecord] = []
-        t = tqdm.tqdm(self.lines)
+        t = tqdm.tqdm(lines)
         t.set_postfix({"read_path": read_path})
         for line in t:
             self.records.append(self._reformat_record(line))
-
-        # self.records: List[SRSENBRecord] = [self._reformat_record(line) for line in self.lines]
         self.begin_datetime = self.records[0].datetime
         self.end_datetime = self.records[-1].datetime
-        print(self.begin_datetime, self.end_datetime)
         self._filter_phy_drb_records()
         self._add_record_periods()
         self._add_record_labels(timetable)
@@ -393,6 +414,8 @@ class SRSENBLogFile:
                 record = SRSENBRecord([raw_record])
                 record.layer = "phy"
                 return record
+        elif "[RLC" in raw_record:
+            return SRSENBRecordRLC([raw_record])
         else:
             return SRSENBRecord([raw_record])
 
@@ -401,9 +424,9 @@ class SRSENBLogFile:
         drb_flag: bool = False
         for record in self.records:
             if "RLC" in record.layer:
-                if "DRB" in record.raw_info:
+                if "DRB" in record.basic_info["type"]:
                     drb_flag = True
-                elif "SRB" in record.raw_info:
+                elif "SRB" in record.basic_info["type"]:
                     drb_flag = False
             elif "PHY" in record.layer:
                 if drb_flag:
@@ -546,7 +569,6 @@ class GNBLogFile:
                     drb_flag = False
                 else:
                     print("ERROR")
-                    print(record.time, record.layer, record.basic_info)
             elif record.layer == "PHY":
                 if drb_flag:
                     filtered_records.append(record)
@@ -683,13 +705,13 @@ if __name__ == "__main__":
 
     """Unit test of SRSENBLogFile"""
     logfile = SRSENBLogFile(
-        read_path="data/srsRAN/srsenb0926/enb_qqmusic_standard.log",
+        read_path="data/srsRAN/srsenb0926/enb_ping_1721601.log",
         timetable=[(
             (
                 (datetime.datetime(2023, 9, 26, 0, 0)),
                 (datetime.datetime(2023, 9, 26, 23, 59))
             ),
-            "wget_anaconda"
+            "ping"
         )],
         window_size=1,
         tbs_threshold=100

@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 import tqdm
-from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder
 
 import utils
@@ -33,11 +33,11 @@ class SRSENBDataset(Dataset):
             self.y: np.ndarray = Xy["y"]
         elif read_log_paths and timetables:
             self.re_preprocessed: bool = True
-            self.logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, timetables)
-            self.channel_n_components: Dict[str, int] = self._embed_features(params)
+            logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, timetables)
+            self.channel_n_components: Dict[str, int] = self._embed_features(logfiles)
             self.label_encoder = LabelEncoder()
-            self.X: np.ndarray = self._form_dataset_X(self.channel_n_components)
-            self.y: np.ndarray = self._form_dataset_y()
+            self.X: np.ndarray = self._form_dataset_X(logfiles, self.channel_n_components)
+            self.y: np.ndarray = self._form_dataset_y(logfiles)
             self._save_Xy(save_path)
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
@@ -58,54 +58,54 @@ class SRSENBDataset(Dataset):
             ))
         return logfiles
 
-    def _embed_features(self, params: utils.HyperParams) -> Dict[str, int]:
+    # TODO parallel computing
+    # TODO down-sampling over-sampling or sample weighting for imbalanced dataset
+
+    @staticmethod
+    def _embed_features(logfiles: List[SRSENBLogFile]) -> Dict[str, int]:
         channel_n_components: Dict[str, int] = {}
         for channel in (t := tqdm.tqdm(utils.SRSENB_channels)):
             t.set_postfix({"embedding_channel": channel})
-            # dataframe from record.message
             records_channel = [
-                record for logfile in self.logfiles for record in logfile.records
+                record for logfile in logfiles for record in logfile.records
                 if record.basic_info["channel"] == channel
             ]
-            # embed
             df_raw = pd.DataFrame([record.message for record in records_channel])
-            df_raw.fillna(-1)
+            df_raw = df_raw.fillna("-1")
             df_embedded = pd.DataFrame()
             columns_minmax: List[str] = []
             columns_onehot: List[str] = []
             for column in df_raw.columns:
                 try:
-                    df_raw[column] = pd[column].apply(eval)
+                    df_raw[column] = df_raw[column].apply(eval)
                     columns_minmax.append(column)
                 except (NameError, TypeError, SyntaxError) as _:
                     columns_onehot.append(column)
             if columns_minmax:
                 scaled = pd.DataFrame(MinMaxScaler().fit_transform(df_raw[columns_minmax]))
-                df_embedded = pd.concat([df_embedded, scaled])
+                df_embedded = pd.concat([df_embedded, scaled], axis=1, ignore_index=True)
             if columns_onehot:
                 encoded = pd.DataFrame(
                     OneHotEncoder(drop="first", sparse_output=False).fit_transform(df_raw[columns_onehot])
                 )
-                df_embedded = pd.concat([df_embedded, encoded])
-            # pca
-            pca = IncrementalPCA(n_components=params.pca_n_components, batch_size=64)
-            # pca = PCA(n_components=params.pca_n_components)
-            summarized = pca.fit_transform(df_embedded.to_numpy())
-            channel_n_components[channel] = pca.n_components_
+                df_embedded = pd.concat([df_embedded, encoded], axis=1, ignore_index=True)
+            df_embedded = df_embedded.to_numpy()
+            channel_n_components[channel] = df_embedded.shape[1]
             for index, record in enumerate(records_channel):
-                record.embedded_info = summarized[index]
+                record.embedded_info = df_embedded[index]
         return channel_n_components
 
-    def _form_dataset_X(self, channel_n_components: Dict[str, int]) -> np.ndarray:
+    @staticmethod
+    def _form_dataset_X(logfiles: List[SRSENBLogFile], channel_n_components: Dict[str, int]) -> np.ndarray:
         raw_X: List[np.ndarray] = []
-        for logfile in self.logfiles:
+        for logfile in logfiles:
             for sample in logfile.samples:
                 raw_X.append(sample.form_sample_X(channel_n_components))
         return np.array(raw_X)
 
-    def _form_dataset_y(self) -> np.ndarray:
+    def _form_dataset_y(self, logfiles: List[SRSENBLogFile]) -> np.ndarray:
         raw_y: List[str] = []
-        for logfile in self.logfiles:
+        for logfile in logfiles:
             for sample in logfile.samples:
                 raw_y.append(sample.label)
         self.label_encoder.fit(raw_y)
@@ -395,7 +395,7 @@ if __name__ == "__main__":
             "data/srsRAN/srsenb0926/enb_qqmusic_standard.log",
             "data/srsRAN/srsenb0926/enb_tmeeting_audio.log",
             "data/srsRAN/srsenb0926/enb_tmeeting_video.log",
-            # "data/srsRAN/srsenb0926/enb_wget_anaconda.log"
+            "data/srsRAN/srsenb0926/enb_wget_anaconda.log"
         ],
         timetables=[
             [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "bilibili")],
@@ -403,7 +403,8 @@ if __name__ == "__main__":
             [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "qqmusic")],
             [((datetime.datetime(2023, 9, 28, 0, 0), datetime.datetime(2023, 9, 28, 23, 59)), "audio_meeting")],
             [((datetime.datetime(2023, 9, 28, 0, 0), datetime.datetime(2023, 9, 28, 23, 59)), "video_meeting")],
-            # [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "wget")],
-        ]
+            [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "wget")],
+        ],
+        save_path="data/srsRAN/srsenb0926/dataset_Xy.npz"
     )
     print("END")

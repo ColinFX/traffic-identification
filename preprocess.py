@@ -395,7 +395,8 @@ class SRSENBLogFile:
         t = tqdm.tqdm(lines)
         t.set_postfix({"read_path": read_path})
         for line in t:
-            self.records.append(self._reformat_record(line))
+            if record := self._reformat_record(line):
+                self.records.append(record)
         self.begin_datetime = self.records[0].datetime
         self.end_datetime = self.records[-1].datetime
         self._filter_phy_drb_records()
@@ -406,18 +407,13 @@ class SRSENBLogFile:
         self._filter_samples(tbs_threshold)
 
     @staticmethod
-    def _reformat_record(raw_record: str) -> SRSENBRecord:
-        if "[PHY" in raw_record:
-            if ": " in raw_record:
-                return SRSENBRecordPHY([raw_record])
-            else:
-                record = SRSENBRecord([raw_record])
-                record.layer = "phy"
-                return record
+    def _reformat_record(raw_record: str) -> SRSENBRecord or None:
+        if "[PHY" in raw_record and ": " in raw_record:
+            return SRSENBRecordPHY([raw_record])
         elif "[RLC" in raw_record:
             return SRSENBRecordRLC([raw_record])
         else:
-            return SRSENBRecord([raw_record])
+            return None
 
     def _filter_phy_drb_records(self):
         filtered_records: List[SRSENBRecord] = []

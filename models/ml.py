@@ -11,7 +11,7 @@ import numpy as np
 import optuna
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, log_loss
+from sklearn.metrics import accuracy_score, confusion_matrix, log_loss, f1_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
@@ -19,11 +19,11 @@ from sklearn.tree import ExtraTreeClassifier
 from xgboost import XGBClassifier
 
 import utils
-from dataloader import GNBDataset
+from dataloader import GNBDataset, SRSENBDataset
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="../data/NR/1st-example")
+parser.add_argument("--data_dir", default="../data/srsRAN/srsenb0926")
 parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-parameter json file
 
 
@@ -41,11 +41,15 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray]:
             save_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
     else:
-        dataset = GNBDataset(
+        dataset = SRSENBDataset(
             params=params,
-            feature_path=os.path.join(args.experiment_dir, "features.json"),
             read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
+        # dataset = GNBDataset(
+        #     params=params,
+        #     feature_path=os.path.join(args.experiment_dir, "features.json"),
+        #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+        # )
     dataset.X = np.reshape(dataset.X, (dataset.X.shape[0], -1))
     return dataset.X, dataset.y
 
@@ -61,11 +65,11 @@ def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> 
     models = {
         "sgd": SGDClassifier(),
         # "svc": SVC(),
-        # "rf": RandomForestClassifier(),
+        "rf": RandomForestClassifier(),
         # "mlp": MLPClassifier(),
-        # "tree": ExtraTreeClassifier(),
-        # "xgb": XGBClassifier(),
-        # "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
+        "tree": ExtraTreeClassifier(),
+        "xgb": XGBClassifier(),
+        "cat": CatBoostClassifier(allow_writing_files=False, verbose=False),
         "lgb": lgb.LGBMClassifier()
     }
     for model_name in models.keys():
@@ -81,8 +85,11 @@ def model_selection(X: np.ndarray, y: np.ndarray, params: utils.HyperParams) -> 
             model_name, y_test.shape[0], time.time() - test_start
         ))
         logging.info(">> {:<3} {:.4f} {:.4f}".format(
-            model_name, accuracy_score(y_test, y_test_pred), log_loss(y_test, y_test_pred)
+            model_name, accuracy_score(y_test, y_test_pred), f1_score(y_test, y_test_pred, average="macro")
         ))
+        # logging.info(">> {:<3} {:.4f} {:.4f}".format(
+        #     model_name, accuracy_score(y_test, y_test_pred), log_loss(y_test, y_test_pred)
+        # ))
         logging.info(confusion_matrix(y_test, y_test_pred))
     return models
 

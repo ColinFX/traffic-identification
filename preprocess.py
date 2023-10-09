@@ -451,11 +451,12 @@ class SRSENBLogFile:
 
     def _trim_beginning_end(
             self,
-            delta: datetime.timedelta = datetime.timedelta(seconds=60)
+            delta_begin: datetime.timedelta = datetime.timedelta(seconds=60),
+            delta_end: datetime.timedelta = datetime.timedelta(seconds=10)
     ):
         trimmed_records: List[SRSENBRecord] = []
         for record in self.records:
-            if self.begin_datetime + delta < record.datetime < self.end_datetime - delta:
+            if self.begin_datetime + delta_begin < record.datetime < self.end_datetime - delta_end:
                 trimmed_records.append(record)
         self.records = trimmed_records
 
@@ -701,16 +702,16 @@ if __name__ == "__main__":
 
     """Unit test of SRSENBLogFile"""
     logfile = SRSENBLogFile(
-        read_path="data/srsRAN/srsenb0926/enb_ping_1721601.log",
+        read_path="data/srsRAN/srsenb1009/qqmusic_standard.log",
         timetable=[(
             (
-                (datetime.datetime(2023, 9, 26, 0, 0)),
-                (datetime.datetime(2023, 9, 26, 23, 59))
+                (datetime.datetime(2023, 9, 1, 0, 0)),
+                (datetime.datetime(2023, 12, 31, 23, 59))
             ),
-            "ping"
+            "tmp"
         )],
         window_size=1,
-        tbs_threshold=100
+        tbs_threshold=20
     )
     channel_count = {}
     for record in logfile.records:

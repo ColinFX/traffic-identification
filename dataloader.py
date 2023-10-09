@@ -31,16 +31,20 @@ class SRSENBDataset(Dataset):
             Xy = np.load(read_npz_path)
             self.X: np.ndarray = Xy["X"]
             self.y: np.ndarray = Xy["y"]
+            self.subframe_vector_len: int = self.X.shape[1]
         elif read_log_paths and timetables:
             self.re_preprocessed: bool = True
             logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, timetables)
             self.channel_n_components: Dict[str, int] = self._embed_features(logfiles)
+            self.subframe_vector_len: int = sum(self.channel_n_components.values())
             self.label_encoder = LabelEncoder()
             self.X: np.ndarray = self._form_dataset_X(logfiles, self.channel_n_components)
             self.y: np.ndarray = self._form_dataset_y(logfiles)
             self._save_Xy(save_path)
+
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
+
 
     @staticmethod
     def _construct_logfiles(

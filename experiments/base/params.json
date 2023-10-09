@@ -8,7 +8,7 @@
   "num_layers": 2,
   "pca_n_components": 20,
   "random_seed": 17,
-  "re_preprocess": true,
+  "re_preprocess": false,
   "save_summary_steps": 100,
   "split_test_percentage": 0.2,
   "split_val_percentage": 0.2,

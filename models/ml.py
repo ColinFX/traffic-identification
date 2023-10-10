@@ -23,7 +23,7 @@ from dataloader import GNBDataset, SRSENBDataset
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="../data/srsRAN/srsenb0926")
+parser.add_argument("--data_dir", default="../data/srsRAN/srsenb1009")
 parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-parameter json file
 
 

@@ -1,4 +1,5 @@
 import datetime
+import gc
 import json
 import os.path
 from typing import Dict, List, Tuple
@@ -22,7 +23,7 @@ class SRSENBDataset(Dataset):
             self,
             params: utils.HyperParams,
             read_log_paths: List[str] = None,
-            timetables: List[List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]]] = None,
+            labels: List[str] = None,
             save_path: str = None,
             read_npz_path: str = None
     ):
@@ -32,16 +33,15 @@ class SRSENBDataset(Dataset):
             self.X: np.ndarray = Xy["X"]
             self.y: np.ndarray = Xy["y"]
             self.subframe_vector_len: int = self.X.shape[1]
-        elif read_log_paths and timetables:
+        elif read_log_paths and labels:
             self.re_preprocessed: bool = True
-            logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, timetables)
+            logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, labels)
             self.channel_n_components: Dict[str, int] = self._embed_features(logfiles)
             self.subframe_vector_len: int = sum(self.channel_n_components.values())
             self.label_encoder = LabelEncoder()
             self.X: np.ndarray = self._form_dataset_X(logfiles, self.channel_n_components)
             self.y: np.ndarray = self._form_dataset_y(logfiles)
             self._save_Xy(save_path)
-
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
 
@@ -50,18 +50,19 @@ class SRSENBDataset(Dataset):
     def _construct_logfiles(
             params: utils.HyperParams,
             read_paths: List[str],
-            timetables: List[List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]]]
+            labels: List[str]
     ) -> List[SRSENBLogFile]:
         logfiles: List[SRSENBLogFile] = []
         for idx in range(len(read_paths)):
             logfiles.append(SRSENBLogFile(
                     read_paths[idx],
-                    timetables[idx],
+                    labels[idx],
                     params.window_size,
                     params.tb_len_threshold
             ))
         return logfiles
 
+    # TODO let encoders return list of features instead of simple n_components
     # TODO parallel computing
     # TODO down-sampling over-sampling or sample weighting for imbalanced dataset
 
@@ -394,21 +395,28 @@ if __name__ == "__main__":
     dataset = SRSENBDataset(
         params=utils.HyperParams(json_path="experiments/base/params.json"),
         read_log_paths=[
+            "data/srsRAN/srsenb1009/qqmusic_standard.log",
             "data/srsRAN/srsenb0926/enb_bilibili_1080.log",
-            "data/srsRAN/srsenb0926/enb_ping_1721601.log",
-            "data/srsRAN/srsenb0926/enb_qqmusic_standard.log",
-            "data/srsRAN/srsenb0926/enb_tmeeting_audio.log",
-            "data/srsRAN/srsenb0926/enb_tmeeting_video.log",
-            "data/srsRAN/srsenb0926/enb_wget_anaconda.log"
+            "data/srsRAN/srsenb1009/wget_anaconda.log",
+            "data/srsRAN/srsenb1009/bilibili_live.log",
+            "data/srsRAN/srsenb1009/tiktok_browse.log",
+            "data/srsRAN/srsenb1009/tmeeting_video.log",
+            "data/srsRAN/srsenb1009/tmeeting_audio.log",
+            "data/srsRAN/srsenb1009/zhihu_browse.log",
+            "data/srsRAN/srsenb1009/fastping_1721601.log"
         ],
-        timetables=[
-            [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "bilibili")],
-            [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "ping")],
-            [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "qqmusic")],
-            [((datetime.datetime(2023, 9, 28, 0, 0), datetime.datetime(2023, 9, 28, 23, 59)), "audio_meeting")],
-            [((datetime.datetime(2023, 9, 28, 0, 0), datetime.datetime(2023, 9, 28, 23, 59)), "video_meeting")],
-            [((datetime.datetime(2023, 9, 26, 0, 0), datetime.datetime(2023, 9, 26, 23, 59)), "wget")],
+        labels=[
+            "qqmusic_standard",
+            "bilibili_video",
+            "wget_anaconda",
+            "bilibili_live",
+            "tiktok_browse",
+            "tmeeting_video",
+            "tmeeting_audio",
+            "zhihu_browse",
+            "fastping_1721601"
         ],
-        save_path="data/srsRAN/srsenb0926/dataset_Xy.npz"
+        save_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
     )
+    print(dataset.channel_n_components)
     print("END")

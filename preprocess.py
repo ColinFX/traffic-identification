@@ -61,6 +61,8 @@ class SRSENBRecordPHY(SRSENBRecord):
         basic_info: Dict[str, str] = {}
         message: Dict[str, str] = {}
         match: Match = re.match(r'\[\s*(\d+)]\s([A-Z]+):\s(.*)', raw_info)
+        if match is None:
+            print(raw_info)
         basic_info["subframe"] = match.groups()[0]
         basic_info["channel"] = match.groups()[1]
         remaining_string = match.groups()[2].replace(';', ',')
@@ -385,9 +387,9 @@ class SRSENBLogFile:
     def __init__(
             self,
             read_path: str,
-            timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]],
+            label: str,
             window_size: int,
-            tbs_threshold: int
+            tbs_threshold: int,
     ):
         with open(read_path, 'r') as f:
             lines: List[str] = f.readlines()
@@ -396,19 +398,19 @@ class SRSENBLogFile:
         t.set_postfix({"read_path": read_path})
         for line in t:
             if record := self._reformat_record(line):
+                record.label = label
                 self.records.append(record)
         self.begin_datetime = self.records[0].datetime
         self.end_datetime = self.records[-1].datetime
         self._filter_phy_drb_records()
         self._add_record_periods()
-        self._add_record_labels(timetable)
         self._trim_beginning_end()
         self.samples: List[SRSENBSample] = self._regroup_records(window_size)
         self._filter_samples(tbs_threshold)
 
     @staticmethod
     def _reformat_record(raw_record: str) -> SRSENBRecord or None:
-        if "[PHY" in raw_record and ": " in raw_record:
+        if "[PHY" in raw_record and "CH: " in raw_record:
             return SRSENBRecordPHY([raw_record])
         elif "[RLC" in raw_record:
             return SRSENBRecordRLC([raw_record])
@@ -437,17 +439,6 @@ class SRSENBLogFile:
                 current_period += 1
             record.basic_info["period"] = str(current_period)
             last_subframe = int(record.basic_info["subframe"])
-
-    def _add_record_labels(
-            self,
-            timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]],
-            delete_noise: bool = True
-    ):
-        for idx, record in enumerate(self.records):
-            label = record.get_record_label(timetable)
-            record.label = label
-            if delete_noise and not record.label:
-                del self.records[idx]
 
     def _trim_beginning_end(
             self,
@@ -702,17 +693,17 @@ if __name__ == "__main__":
 
     """Unit test of SRSENBLogFile"""
     logfile = SRSENBLogFile(
-        read_path="data/srsRAN/srsenb1009/qqmusic_standard.log",
-        timetable=[(
-            (
-                (datetime.datetime(2023, 9, 1, 0, 0)),
-                (datetime.datetime(2023, 12, 31, 23, 59))
-            ),
-            "tmp"
-        )],
+        read_path="data/srsRAN/srsenb1009/fastping_1721601.log",
+        label="fastping",
         window_size=1,
-        tbs_threshold=20
+        tbs_threshold=0
     )
+
+    for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
+        print(th, sum([sample.tb_len >= th for sample in logfile.samples]))
+
+    print((logfile.end_datetime - logfile.begin_datetime - datetime.timedelta(seconds=70)).seconds)
+
     channel_count = {}
     for record in logfile.records:
         if record.basic_info["channel"] in channel_count:

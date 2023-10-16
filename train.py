@@ -199,7 +199,7 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    classifier = LSTMClassifier(embedding_length=dataloaders.dataset.X.shape[2], num_classes=9)  # TODO CONFIG HERE
+    classifier = LSTMClassifier()  # TODO CONFIG HERE
     # transformer = TransformerClassifier(
     #     params=params,
     #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper

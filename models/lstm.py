@@ -1,34 +1,22 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 import utils
 
 
 class LSTMClassifier(nn.Module):
-    def __init__(
-            self,
-            embedding_length: int,
-            num_classes: int,
-            hidden_size: int = 256,
-            num_layers: int = 3
-    ):
+    def __init__(self):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.out_features = num_classes
-        self.lstm = nn.LSTM(
-            input_size=embedding_length,
-            hidden_size=self.hidden_size,
-            num_layers=num_layers,
-            batch_first=True
-        )
-        self.fc1 = nn.Linear(in_features=self.hidden_size, out_features=self.out_features)
+        self.lstm = nn.LSTM(input_size=54, hidden_size=256, num_layers=5, batch_first=True)
+        self.fc1 = nn.Linear(in_features=256, out_features=9)
 
     def forward(self, data_batch: torch.Tensor) -> torch.Tensor:
-        # batch_size * sequence_length * embedding_length
-        data_batch = data_batch.transpose(0, 1)  # sequence_length * batch_size * embedding_length
-        data_batch, _ = self.lstm(data_batch)  # sequence_length * batch_size * hidden_size
-        data_batch = self.fc1(data_batch[-1, :, :])  # batch_size * num_classes
+        h0 = torch.zeros(5, data_batch.shape[0], 256).to(device=data_batch.device)
+        c0 = torch.zeros(5, data_batch.shape[0], 256).to(device=data_batch.device)
+        data_batch, _ = self.lstm(data_batch, (h0, c0))
+        data_batch = self.fc1(data_batch[:, -1, :])
         return data_batch
 
     def reset_weights(self):

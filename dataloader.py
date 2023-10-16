@@ -36,6 +36,7 @@ class SRSENBDataset(Dataset):
         elif read_log_paths and labels:
             self.re_preprocessed: bool = True
             logfiles: List[SRSENBLogFile] = SRSENBDataset._construct_logfiles(params, read_log_paths, labels)
+            self.class_n_samples: Dict[str, int] = {labels[i]: len(logfiles[i].samples) for i in range(len(labels))}
             self.channel_n_components: Dict[str, int] = self._embed_features(logfiles)
             self.subframe_vector_len: int = sum(self.channel_n_components.values())
             self.label_encoder = LabelEncoder()
@@ -44,7 +45,6 @@ class SRSENBDataset(Dataset):
             self._save_Xy(save_path)
         else:
             raise TypeError("Failed to load GNBDataset from npz file or log files")
-
 
     @staticmethod
     def _construct_logfiles(
@@ -120,6 +120,12 @@ class SRSENBDataset(Dataset):
         """Write preprocessed X and y to file for further usage"""
         if save_path:
             np.savez(save_path, X=self.X, y=self.y)
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        return torch.tensor(self.X[idx], dtype=torch.float32), int(self.y[idx])
 
 
 class GNBDataset(Dataset):
@@ -329,6 +335,35 @@ class GNBDataset(Dataset):
         print("\n")
 
 
+class SRSENBDataLoaders:
+    def __init__(
+            self,
+            params: utils.HyperParams,
+            read_log_paths: List[str] = None,
+            labels: List[str] = None,
+            save_path: str = None,
+            read_npz_path: str = None
+    ):
+        self.dataset = SRSENBDataset(params, read_log_paths, labels, save_path, read_npz_path)
+        split_datasets = random_split(
+            self.dataset,
+            lengths=[
+                (1 - params.split_val_percentage - params.split_test_percentage),
+                params.split_val_percentage,
+                params.split_test_percentage
+            ],
+            generator=torch.Generator().manual_seed(params.random_seed)
+        )
+        self.num_features: int = params.pca_n_components * sum([
+            len(channels) for channels in utils.GNB_cell_channels.values()
+        ])
+        self.num_classes: int = len(set(self.dataset.y))
+        # TODO: maybe move this to Dataset so that functions in ml.py can use it directly but not calculate again
+        self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
+        self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
+        self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)
+
+
 class GNBDataLoaders:
     def __init__(
             self,
@@ -391,32 +426,40 @@ if __name__ == "__main__":
     #     read_npz_path=""
     # )
 
-    """Unit test of SRSENBDataset"""
-    dataset = SRSENBDataset(
+    # """Unit test of SRSENBDataset"""
+    # dataset = SRSENBDataset(
+    #     params=utils.HyperParams(json_path="experiments/base/params.json"),
+    #     read_log_paths=[
+    #         "data/srsRAN/srsenb1009/qqmusic_standard.log",
+    #         "data/srsRAN/srsenb0926/enb_bilibili_1080.log",
+    #         "data/srsRAN/srsenb1009/wget_anaconda.log",
+    #         "data/srsRAN/srsenb1009/bilibili_live.log",
+    #         "data/srsRAN/srsenb1009/tiktok_browse.log",
+    #         "data/srsRAN/srsenb1009/tmeeting_video.log",
+    #         "data/srsRAN/srsenb1009/tmeeting_audio.log",
+    #         "data/srsRAN/srsenb1009/zhihu_browse.log",
+    #         "data/srsRAN/srsenb1009/fastping_1721601.log"
+    #     ],
+    #     labels=[
+    #         "qqmusic_standard",
+    #         "bilibili_video",
+    #         "wget_anaconda",
+    #         "bilibili_live",
+    #         "tiktok_browse",
+    #         "tmeeting_video",
+    #         "tmeeting_audio",
+    #         "zhihu_browse",
+    #         "fastping_1721601"
+    #     ],
+    #     save_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
+    # )
+    # print(dataset.channel_n_components)
+    # print(dataset.class_n_samples)
+
+    """Unit test of SRSENBDataLoaders"""
+    dataloaders = SRSENBDataLoaders(
         params=utils.HyperParams(json_path="experiments/base/params.json"),
-        read_log_paths=[
-            "data/srsRAN/srsenb1009/qqmusic_standard.log",
-            "data/srsRAN/srsenb0926/enb_bilibili_1080.log",
-            "data/srsRAN/srsenb1009/wget_anaconda.log",
-            "data/srsRAN/srsenb1009/bilibili_live.log",
-            "data/srsRAN/srsenb1009/tiktok_browse.log",
-            "data/srsRAN/srsenb1009/tmeeting_video.log",
-            "data/srsRAN/srsenb1009/tmeeting_audio.log",
-            "data/srsRAN/srsenb1009/zhihu_browse.log",
-            "data/srsRAN/srsenb1009/fastping_1721601.log"
-        ],
-        labels=[
-            "qqmusic_standard",
-            "bilibili_video",
-            "wget_anaconda",
-            "bilibili_live",
-            "tiktok_browse",
-            "tmeeting_video",
-            "tmeeting_audio",
-            "zhihu_browse",
-            "fastping_1721601"
-        ],
-        save_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
+        read_npz_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
     )
-    print(dataset.channel_n_components)
+
     print("END")

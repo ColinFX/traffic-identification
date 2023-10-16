@@ -14,7 +14,7 @@ from tqdm import trange
 from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
 import utils
 from evaluate import evaluate
-from dataloader import GNBDataLoaders
+from dataloader import GNBDataLoaders, SRSENBDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -178,15 +178,19 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    dataloaders = GNBDataLoaders(
+    # dataloaders = GNBDataLoaders(
+    #     params=params,
+    #     feature_path=os.path.join(args.experiment_dir, "features.json"),
+    #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+    #     timetables=[[
+    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+    #     ]],
+    #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+    # )
+    dataloaders = SRSENBDataLoaders(
         params=params,
-        feature_path=os.path.join(args.experiment_dir, "features.json"),
-        read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
-        timetables=[[
-            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]],
-        read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+        read_npz_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
     )
     # TODO: read from npz, maybe share this similar step with ml, move paths to json
     train_dataloader = dataloaders.train
@@ -195,7 +199,7 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    classifier = LSTMClassifier()  # TODO CONFIG HERE
+    classifier = LSTMClassifier(embedding_length=dataloaders.dataset.X.shape[2], num_classes=9)  # TODO CONFIG HERE
     # transformer = TransformerClassifier(
     #     params=params,
     #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper

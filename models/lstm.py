@@ -9,6 +9,7 @@ import utils
 class LSTMClassifier(nn.Module):
     def __init__(self):
         super().__init__()
+        # TODO URGENT input_size and out_features passed by parameters
         self.lstm = nn.LSTM(input_size=54, hidden_size=256, num_layers=5, batch_first=True)
         self.fc1 = nn.Linear(in_features=256, out_features=9)
 

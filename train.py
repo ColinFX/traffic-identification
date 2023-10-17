@@ -9,9 +9,9 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-# from models.transformer import TransformerClassifier, loss_fn, metrics
+from models.transformer import TransformerEncoderClassifier, loss_fn, metrics
 # from models.cnn import CNNClassifier, loss_fn, metrics
-from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
+# from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
 import utils
 from evaluate import evaluate
 from dataloader import GNBDataLoaders, SRSENBDataLoaders
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    classifier = LSTMClassifier()  # TODO CONFIG HERE
+    classifier = TransformerEncoderClassifier()  # TODO CONFIG HERE
     # transformer = TransformerClassifier(
     #     params=params,
     #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper

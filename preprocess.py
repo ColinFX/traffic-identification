@@ -14,7 +14,7 @@ import utils
 class SRSENBRecord:
     def __init__(self, raw_record: List[str]):
         match: Match = re.match(
-            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})\s\[([A-Z0-9]+)\s*]\s\[([A-Z])]\s(.*)',
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})\s\[([A-Z0-9\-]+)\s*]\s\[([A-Z])]\s(.*)',
             raw_record[0]
         )
         self.datetime: datetime.datetime = datetime.datetime.fromisoformat(match.groups()[0])
@@ -390,6 +390,8 @@ class SRSENBLogFile:
             label: str,
             window_size: int,
             tbs_threshold: int,
+            delta_begin: datetime.timedelta = datetime.timedelta(seconds=60),
+            delta_end: datetime.timedelta = datetime.timedelta(seconds=10)
     ):
         with open(read_path, 'r') as f:
             lines: List[str] = f.readlines()
@@ -404,9 +406,10 @@ class SRSENBLogFile:
         self.end_datetime = self.records[-1].datetime
         self._filter_phy_drb_records()
         self._add_record_periods()
-        self._trim_beginning_end()
+        self.trimmed_timedelta: datetime.timedelta = self._trim_beginning_end(delta_begin, delta_end)
         self.samples: List[SRSENBSample] = self._regroup_records(window_size)
         self._filter_samples(tbs_threshold)
+        self.uplink_snr_statistics: Dict[str, float] = self._get_uplink_snr_statistics()
 
     @staticmethod
     def _reformat_record(raw_record: str) -> SRSENBRecord or None:
@@ -444,12 +447,13 @@ class SRSENBLogFile:
             self,
             delta_begin: datetime.timedelta = datetime.timedelta(seconds=60),
             delta_end: datetime.timedelta = datetime.timedelta(seconds=10)
-    ):
+    ) -> datetime.timedelta:
         trimmed_records: List[SRSENBRecord] = []
         for record in self.records:
             if self.begin_datetime + delta_begin < record.datetime < self.end_datetime - delta_end:
                 trimmed_records.append(record)
         self.records = trimmed_records
+        return delta_begin + delta_end
 
     def _regroup_records(self, window_size: int) -> List[SRSENBSample]:
         samples: List[SRSENBSample] = []
@@ -480,6 +484,15 @@ class SRSENBLogFile:
             if sample.tb_len >= threshold and sample.label:
                 filtered_samples.append(sample)
         self.samples = filtered_samples
+
+    def _get_uplink_snr_statistics(self) -> Dict[str, float]:
+        """Get mean uplink (from UE to ENB) signal-to-noise ratio. """
+        records_snr: List[float] = []
+        for sample in self.samples:
+            for record in sample.records:
+                if "snr" in record.message.keys():
+                    records_snr.append(float(record.message["snr"]))
+        return {"min": np.min(records_snr), "avg": np.average(records_snr), "max": np.max(records_snr)}
 
 
 class GNBLogFile:
@@ -693,16 +706,18 @@ if __name__ == "__main__":
 
     """Unit test of SRSENBLogFile"""
     logfile = SRSENBLogFile(
-        read_path="data/srsRAN/srsenb1009/fastping_1721601.log",
-        label="fastping",
+        read_path="data/srsRAN/srsenb1018-2/bilibili_live_6040.log",
+        label="test",
         window_size=1,
-        tbs_threshold=0
+        tbs_threshold=20,
+        # delta_begin=datetime.timedelta(seconds=600)
     )
+    print("UL snr: ", logfile.uplink_snr_statistics)
 
     for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
         print(th, sum([sample.tb_len >= th for sample in logfile.samples]))
 
-    print((logfile.end_datetime - logfile.begin_datetime - datetime.timedelta(seconds=70)).seconds)
+    print("duration: ", (logfile.end_datetime - logfile.begin_datetime - logfile.trimmed_timedelta).seconds)
 
     channel_count = {}
     for record in logfile.records:

@@ -6,8 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-import utils
-
 
 # TODO URGENT add positional encoding to TransformerEncoder
 class PositionalEmbedding(torch.nn.Module):
@@ -90,7 +88,14 @@ class PositionalEmbedding(torch.nn.Module):
 #
 #
 # class TransformerEncoder(torch.nn.Module):
-#     def __init__(self, seq_len: int, embed_dim: int, num_layers: int = 2, expansion_factor: int = 4, n_heads: int = 5):
+#     def __init__(
+#             self,
+#             seq_len: int,
+#             embed_dim: int,
+#             num_layers: int = 2,
+#             expansion_factor: int = 4,
+#             n_heads: int = 5
+#     ):
 #         super().__init__()
 #         self.positional_encoder = PositionalEmbedding(seq_len, embed_dim)
 #         self.layers = torch.nn.ModuleList([
@@ -168,26 +173,25 @@ class TransformerEncoderClassifier(nn.Module):
         return data_batch
 
 
+class TransformerClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transformer = torch.nn.Transformer(d_model=54, nhead=6, batch_first=True)
+        self.linear = torch.nn.Linear(in_features=540, out_features=9)
+
+    def forward(self, data_batch: torch.Tensor):
+        data_batch = self.transformer(data_batch, torch.zeros_like(data_batch))
+        data_batch = data_batch.reshape(data_batch.shape[0], -1)
+        data_batch = self.linear(data_batch)
+        return data_batch
+
+
 def loss_fn(outputs: torch.Tensor, labels: torch.Tensor) -> torch.FloatTensor:
-    """
-    Args:
-        * outputs: (torch.FloatTensor) output of the model, shape: batch_size * 2
-        * labels: (torch.Tensor) ground truth label of the image, shape: batch_size with each element a value in [0, 1]
-    Returns:
-        * loss: (torch.FloatTensor) cross entropy loss for all images in the batch
-    """
     loss = nn.CrossEntropyLoss()
     return loss(outputs, labels)
 
 
 def accuracy(outputs: np.ndarray[np.float32], labels: np.ndarray[np.int64]) -> np.float64:
-    """
-    Args:
-        * outputs: (np.ndarray) outpout of the model, shape: batch_size * 2
-        * labels: (np.ndarray) ground truth label of the image, shape: batch_size with each element a value in [0, 1]
-    Returns:
-        * accuracy: (float) in [0,1]
-    """
     outputs = np.argmax(outputs, axis=1)
     return np.sum(outputs == labels) / float(labels.size)
 

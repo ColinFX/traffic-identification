@@ -10,7 +10,7 @@ from tqdm import trange
 
 from models.transformer import TransformerEncoderClassifier, loss_fn, metrics
 import utils
-from dataloader import GNBDataLoaders
+from dataloader import AmariDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    dataloaders = GNBDataLoaders(
+    dataloaders = AmariDataLoaders(
         params=params,
         feature_path=os.path.join(args.experiment_dir, "features.json"),
         read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],

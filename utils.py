@@ -144,7 +144,7 @@ def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
     Read feature map from json containing key features to be taken by ML/DL models
     Return:
         feature_map: Dict[str, Dict[str, List[str]]] with first level indexing for different physical layer channels
-        and second level indexing for different info fields of GNBRecord, each list containing all wanted features from
+        and second level indexing for different info fields of AmariNSARecord, each list containing all wanted features from
         that channel in that info field
     """
     with open(feature_path, 'r') as f:
@@ -159,10 +159,10 @@ def is_number(string: str) -> bool:
         return False
 
 
-SRSENB_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
+srsRANLte_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
 
 
-GNB_cell_channels: Dict[str, List[str]] = {
+amariNSA_channels: Dict[str, List[str]] = {
     "03": ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "SRS", "PHICH"],
     "04": ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
 }

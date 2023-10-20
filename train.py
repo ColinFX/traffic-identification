@@ -14,7 +14,7 @@ from models.transformer import TransformerEncoderClassifier, loss_fn, metrics
 # from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
 import utils
 from evaluate import evaluate
-from dataloader import GNBDataLoaders, SRSENBDataLoaders
+from dataloader import AmariDataLoaders, SrsRANDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    # dataloaders = GNBDataLoaders(
+    # dataloaders = AmariDataLoaders(
     #     params=params,
     #     feature_path=os.path.join(args.experiment_dir, "features.json"),
     #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     #     ]],
     #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
     # )
-    dataloaders = SRSENBDataLoaders(
+    dataloaders = SrsRANDataLoaders(
         params=params,
         read_npz_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
     )

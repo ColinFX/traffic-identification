@@ -11,7 +11,7 @@ import tqdm
 import utils
 
 
-class SRSENBRecord:
+class SrsRANLteRecord:
     def __init__(self, raw_record: List[str]):
         match: Match = re.match(
             r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})\s\[([A-Z0-9\-]+)\s*]\s\[([A-Z])]\s(.*)',
@@ -20,12 +20,10 @@ class SRSENBRecord:
         self.datetime: datetime.datetime = datetime.datetime.fromisoformat(match.groups()[0])
         self.layer: str = match.groups()[1]
         self.log_level: str = match.groups()[2]
-        self.basic_info: Dict[str, str]
-        self.message: Dict[str, str]
         self.basic_info, self.message = self._extract_info_message(match.groups()[3])
         self._reformat_values()
         self.label: str = ""
-        self.embedded_info: np.ndarray = np.empty([])
+        self.embedded_message: np.ndarray = np.empty([])
 
     @staticmethod
     @abc.abstractmethod
@@ -34,6 +32,7 @@ class SRSENBRecord:
 
     def _reformat_values(self):
         for key in self.message.copy().keys():
+            # process rb, ex. "rb=(2,4)"
             if key == "rb":
                 match_rb: Match = re.match(r'\((\d+),(\d+)\)', self.message[key])
                 self.message["rb_start"] = match_rb.groups()[0]
@@ -41,33 +40,27 @@ class SRSENBRecord:
                 self.message["rb_len"] = str(int(match_rb.groups()[1]) - int(match_rb.groups()[0]))
                 del self.message["rb"]
             else:
+                # remove units, ex. "snr=4.1 dB"
                 match_unit: Match = re.match(r'([+\-.\d]+)\s([a-zA-Z]+)', self.message[key])
                 if match_unit:
                     self.message[key] = match_unit.groups()[0]
+                # remove braces, ex. "tbs={32}"
                 match_brace: Match = re.match(r'\{(.+)}', self.message[key])
                 if match_brace:
                     self.message[key] = match_brace.groups()[0]
 
-    def get_record_label(self, timetable: List[Tuple[Tuple[datetime.datetime, datetime.datetime], str]]) -> str:
-        for range_, label in timetable:
-            if range_[0] <= self.datetime < range_[1]:
-                return label
-        return ""
 
-
-class SRSENBRecordPHY(SRSENBRecord):
+class SrsRANLteRecordPHY(SrsRANLteRecord):
     @staticmethod
     def _extract_info_message(raw_info: str) -> Tuple[Dict[str, str], Dict[str, str]]:
         basic_info: Dict[str, str] = {}
         message: Dict[str, str] = {}
         match: Match = re.match(r'\[\s*(\d+)]\s([A-Z]+):\s(.*)', raw_info)
-        if match is None:
-            print(raw_info)
         basic_info["subframe"] = match.groups()[0]
         basic_info["channel"] = match.groups()[1]
-        remaining_string = match.groups()[2].replace(';', ',')
-        remaining_string = re.sub(r'\s\(cc=\d\)', '', remaining_string)
-        parts = remaining_string.split(', ')
+        # remove duplicated cc info, ex. "cqi=0 (cc=0)"
+        remaining_string = re.sub(r'\s\(cc=\d\)', '', match.groups()[2])
+        parts = re.split(r", |; ", remaining_string)
         for part in parts:
             sub_parts = part.split("=")
             if len(sub_parts) == 2:
@@ -78,7 +71,7 @@ class SRSENBRecordPHY(SRSENBRecord):
         return basic_info, message
 
 
-class SRSENBRecordRLC(SRSENBRecord):
+class SrsRANLteRecordRLC(SrsRANLteRecord):
     @staticmethod
     def _extract_info_message(raw_info: str) -> Tuple[Dict[str, str], Dict[str, str]]:
         if "DRB" in raw_info:
@@ -89,7 +82,7 @@ class SRSENBRecordRLC(SRSENBRecord):
             return {"type": ""}, {}
 
 
-class GNBRecord:
+class AmariNSARecord:
     def __init__(self, raw_record: List[str]):
         self.label: str = ""
         self.raw_record = raw_record
@@ -148,7 +141,7 @@ class GNBRecord:
         return ""
 
 
-class GNBRecordPHY(GNBRecord):
+class AmariNSARecordPHY(AmariNSARecord):
     def __init__(self, raw_record: List[str]):
         super().__init__(raw_record)
 
@@ -171,7 +164,7 @@ class GNBRecordPHY(GNBRecord):
         return dict(re.findall(r"(\S+)=(\S+)", long_message_str))
 
 
-class GNBRecordRLC(GNBRecord):
+class AmariNSARecordRLC(AmariNSARecord):
     def __init__(self, raw_record: List[str]):
         super().__init__(raw_record)
 
@@ -187,7 +180,7 @@ class GNBRecordRLC(GNBRecord):
         return {}
 
 
-class GNBRecordGTPU(GNBRecord):
+class AmariNSARecordGTPU(AmariNSARecord):
     def __init__(self, raw_record: List[str]):
         super().__init__(raw_record)
 
@@ -216,10 +209,10 @@ class GNBRecordGTPU(GNBRecord):
         return long_message
 
 
-class SRSENBSample:
+class SrsRANLteSample:
     def __init__(
             self,
-            records: List[SRSENBRecord],
+            records: List[SrsRANLteRecord],
             period: int,
             frame_cycle: int,
             window_size: int
@@ -239,7 +232,6 @@ class SRSENBSample:
         return tb_len_sum
 
     def _get_sample_label(self) -> str:
-        """Get label for each newly formed sample by majority voting of records"""
         voting: Dict[str, int] = {}
         for record in self.records:
             if record.label in voting.keys():
@@ -263,7 +255,7 @@ class SRSENBSample:
                         int(record.basic_info["subframe"]) == subframe
                     ):
                         channel_in_subframe_flag = True
-                        raw_X_subframe.extend(record.embedded_info)
+                        raw_X_subframe.extend(record.embedded_message)
                         break
                 if not channel_in_subframe_flag:
                     raw_X_subframe.extend([0] * channel_n_components[channel])
@@ -271,10 +263,10 @@ class SRSENBSample:
         return np.array(raw_X)
 
 
-class GNBSample:
+class AmariNSASample:
     def __init__(
             self,
-            records: List[GNBRecord],
+            records: List[AmariNSARecord],
             period: int,
             frame_cycle: int,
             window_size: int,
@@ -339,7 +331,7 @@ class GNBSample:
                 for cell_id, slot in [("03", 0), ("04", 0), ("04", 1)]:
                     if cell_id == "04":
                         subframe = 2 * subframe + slot
-                    for channel in utils.GNB_cell_channels[cell_id]:
+                    for channel in utils.amariNSA_channels[cell_id]:
                         channel_in_subframe_flag = False
                         for record in self.records:
                             if (
@@ -365,7 +357,7 @@ class GNBSample:
                     if cell_id == "04":
                         subframe = 2 * subframe + slot
                     raw_X_subframe: List[float] = []
-                    for channel in utils.GNB_cell_channels["04"]:
+                    for channel in utils.amariNSA_channels["04"]:
                         channel_in_subframe_flag = False
                         for record in self.records:
                             if (
@@ -383,7 +375,7 @@ class GNBSample:
         return np.array(raw_X)
 
 
-class SRSENBLogFile:
+class SrsRANLteLogFile:
     def __init__(
             self,
             read_path: str,
@@ -395,33 +387,30 @@ class SRSENBLogFile:
     ):
         with open(read_path, 'r') as f:
             lines: List[str] = f.readlines()
-        self.records: List[SRSENBRecord] = []
+        self.records: List[SrsRANLteRecord] = []
         t = tqdm.tqdm(lines)
         t.set_postfix({"read_path": read_path})
         for line in t:
             if record := self._reformat_record(line):
                 record.label = label
                 self.records.append(record)
-        self.begin_datetime = self.records[0].datetime
-        self.end_datetime = self.records[-1].datetime
         self._filter_phy_drb_records()
         self._add_record_periods()
-        self.trimmed_timedelta: datetime.timedelta = self._trim_beginning_end(delta_begin, delta_end)
-        self.samples: List[SRSENBSample] = self._regroup_records(window_size)
+        self.valid_duration: datetime.timedelta = self._trim_beginning_end(delta_begin, delta_end)
+        self.samples: List[SrsRANLteSample] = self._regroup_records(window_size)
         self._filter_samples(tbs_threshold)
-        self.uplink_snr_statistics: Dict[str, float] = self._get_uplink_snr_statistics()
 
     @staticmethod
-    def _reformat_record(raw_record: str) -> SRSENBRecord or None:
+    def _reformat_record(raw_record: str) -> SrsRANLteRecord or None:
         if "[PHY" in raw_record and "CH: " in raw_record:
-            return SRSENBRecordPHY([raw_record])
+            return SrsRANLteRecordPHY([raw_record])
         elif "[RLC" in raw_record:
-            return SRSENBRecordRLC([raw_record])
+            return SrsRANLteRecordRLC([raw_record])
         else:
             return None
 
     def _filter_phy_drb_records(self):
-        filtered_records: List[SRSENBRecord] = []
+        filtered_records: List[SrsRANLteRecord] = []
         drb_flag: bool = False
         for record in self.records:
             if "RLC" in record.layer:
@@ -448,18 +437,20 @@ class SRSENBLogFile:
             delta_begin: datetime.timedelta = datetime.timedelta(seconds=60),
             delta_end: datetime.timedelta = datetime.timedelta(seconds=10)
     ) -> datetime.timedelta:
-        trimmed_records: List[SRSENBRecord] = []
+        begin_datetime = self.records[0].datetime
+        end_datetime = self.records[-1].datetime
+        trimmed_records: List[SrsRANLteRecord] = []
         for record in self.records:
-            if self.begin_datetime + delta_begin < record.datetime < self.end_datetime - delta_end:
+            if begin_datetime + delta_begin < record.datetime < end_datetime - delta_end:
                 trimmed_records.append(record)
         self.records = trimmed_records
-        return delta_begin + delta_end
+        return end_datetime - begin_datetime - delta_begin - delta_end
 
-    def _regroup_records(self, window_size: int) -> List[SRSENBSample]:
-        samples: List[SRSENBSample] = []
+    def _regroup_records(self, window_size: int) -> List[SrsRANLteSample]:
+        samples: List[SrsRANLteSample] = []
         current_period = -1
         current_frame_cycle = -1
-        current_sample_records: List[SRSENBRecord] = []
+        current_sample_records: List[SrsRANLteRecord] = []
         for record in self.records:
             if (
                 int(record.basic_info["period"]) == current_period and
@@ -469,23 +460,23 @@ class SRSENBLogFile:
             else:
                 if current_sample_records:
                     samples.append(
-                        SRSENBSample(current_sample_records, current_period, current_frame_cycle, window_size)
+                        SrsRANLteSample(current_sample_records, current_period, current_frame_cycle, window_size)
                     )
                 current_sample_records = [record]
                 current_period = int(record.basic_info["period"])
                 current_frame_cycle = int(record.basic_info["subframe"]) // 10 // window_size
         if current_sample_records:
-            samples.append(SRSENBSample(current_sample_records, current_period, current_frame_cycle, window_size))
+            samples.append(SrsRANLteSample(current_sample_records, current_period, current_frame_cycle, window_size))
         return samples
 
     def _filter_samples(self, threshold: int):
-        filtered_samples: List[SRSENBSample] = []
+        filtered_samples: List[SrsRANLteSample] = []
         for sample in self.samples:
             if sample.tb_len >= threshold and sample.label:
                 filtered_samples.append(sample)
         self.samples = filtered_samples
 
-    def _get_uplink_snr_statistics(self) -> Dict[str, float]:
+    def get_snr_statistics(self) -> Dict[str, float]:
         """Get mean uplink (from UE to ENB) signal-to-noise ratio. """
         records_snr: List[float] = []
         for sample in self.samples:
@@ -494,8 +485,17 @@ class SRSENBLogFile:
                     records_snr.append(float(record.message["snr"]))
         return {"min": np.min(records_snr), "avg": np.average(records_snr), "max": np.max(records_snr)}
 
+    def get_channel_statistics(self) -> Dict[str, int]:
+        channel_records: Dict[str, int] = {}
+        for record in self.records:
+            if record.basic_info["channel"] in channel_records:
+                channel_records[record.basic_info["channel"]] += 1
+            else:
+                channel_records[record.basic_info["channel"]] = 1
+        return channel_records
 
-class GNBLogFile:
+
+class AmariNSALogFile:
     def __init__(
             self,
             read_path: str,
@@ -513,11 +513,11 @@ class GNBLogFile:
             self.lines: List[str] = f.readlines()
         self.date: datetime.date = self._process_header()
         self.raw_records: List[List[str]] = self._group_lines()
-        self.records: List[GNBRecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
+        self.records: List[AmariNSARecord] = [self._reformat_record(raw_record) for raw_record in self.raw_records]
         self._filter_phy_drb_records()
         self._sort_records()
         self._add_record_labels(timetable)
-        self.samples: List[GNBSample] = self._regroup_records(window_size, pca_n_components)
+        self.samples: List[AmariNSASample] = self._regroup_records(window_size, pca_n_components)
         self._filter_samples(tb_len_threshold)
 
     def _process_header(self) -> datetime.date:
@@ -547,20 +547,20 @@ class GNBLogFile:
         return raw_records
 
     @staticmethod
-    def _reformat_record(raw_record: List[str]) -> GNBRecord:
-        """Convert `raw_record` with plain text into `GNBRecord` instance"""
+    def _reformat_record(raw_record: List[str]) -> AmariNSARecord:
+        """Convert `raw_record` with plain text into `AmariNSARecord` instance"""
         if "[PHY]" in raw_record[0]:
-            return GNBRecordPHY(raw_record)
+            return AmariNSARecordPHY(raw_record)
         elif "[RLC]" in raw_record[0]:
-            return GNBRecordRLC(raw_record)
+            return AmariNSARecordRLC(raw_record)
         elif "[GTPU]" in raw_record[0]:
-            return GNBRecordGTPU(raw_record)
+            return AmariNSARecordGTPU(raw_record)
         else:
-            return GNBRecord(raw_record)
+            return AmariNSARecord(raw_record)
 
     def _filter_phy_drb_records(self):
         """Keep only data records of physical layer"""
-        filtered_records: List[GNBRecord] = []
+        filtered_records: List[AmariNSARecord] = []
         drb_flag: bool = False
         for record in self.records:
             if record.layer == "RLC":
@@ -629,12 +629,12 @@ class GNBLogFile:
             record.key_info = key_info
         return feature_map
 
-    def _regroup_records(self, window_size: int, pca_n_components: int) -> List[GNBSample]:
+    def _regroup_records(self, window_size: int, pca_n_components: int) -> List[AmariNSASample]:
         """Form samples by fixed window size (number of frames, recommended to be power of 2)"""
-        samples: List[GNBSample] = []
+        samples: List[AmariNSASample] = []
         current_period = -1
         current_frame_cycle = -1
-        current_sample_records: List[GNBRecord] = []
+        current_sample_records: List[AmariNSARecord] = []
         for record in self.records:
             if (
                 int(record.basic_info["period"]) == current_period and
@@ -643,19 +643,19 @@ class GNBLogFile:
                 current_sample_records.append(record)
             else:
                 if current_sample_records:
-                    samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
+                    samples.append(AmariNSASample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
                     # TODO: pass everything by params
                 current_sample_records = [record]
                 current_period = int(record.basic_info["period"])
                 current_frame_cycle = int(record.basic_info["frame"]) // window_size
 
         if current_sample_records:
-            samples.append(GNBSample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
+            samples.append(AmariNSASample(current_sample_records, current_period, current_frame_cycle, window_size, pca_n_components))
         return samples
 
     def _filter_samples(self, threshold: int):
         """Keep only samples with enough data transmitted and meaningful label"""
-        filtered_samples: List[GNBSample] = []
+        filtered_samples: List[AmariNSASample] = []
         for sample in self.samples:
             if sample.tb_len >= threshold and sample.label:
                 filtered_samples.append(sample)
@@ -689,8 +689,8 @@ class GNBLogFile:
 
 
 if __name__ == "__main__":
-    # """Unit test of GNBLogFile"""
-    # logfile = GNBLogFile(
+    # # Unit test of AmariNSALogFile
+    # logfile = AmariNSALogFile(
     #     read_path="data/NR/1st-example/gnb0.log",
     #     feature_map=utils.get_feature_map("experiments/base/features.json"),
     #     timetable=[
@@ -704,26 +704,19 @@ if __name__ == "__main__":
     # logfile.export_json(save_path="data/NR/1st-example/export.json")
     # logfile.export_csv(save_path="data/NR/1st-example/export.csv")
 
-    """Unit test of SRSENBLogFile"""
-    logfile = SRSENBLogFile(
-        read_path="data/srsRAN/srsenb1018-2/bilibili_live_6040.log",
+    # Unit test of SrsRANLteLogFile
+    logfile = SrsRANLteLogFile(
+        read_path="data/srsRAN/srsenb1020/tmeeting_audio_6550.log",
         label="test",
         window_size=1,
-        tbs_threshold=20,
+        tbs_threshold=0,
         # delta_begin=datetime.timedelta(seconds=600)
     )
-    print("UL snr: ", logfile.uplink_snr_statistics)
+    print("snr stat: ", logfile.get_snr_statistics())
+    print("channel stat: ", logfile.get_channel_statistics())
+    print("duration: ", logfile.valid_duration.seconds)
 
     for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
         print(th, sum([sample.tb_len >= th for sample in logfile.samples]))
 
-    print("duration: ", (logfile.end_datetime - logfile.begin_datetime - logfile.trimmed_timedelta).seconds)
-
-    channel_count = {}
-    for record in logfile.records:
-        if record.basic_info["channel"] in channel_count:
-            channel_count[record.basic_info["channel"]] += 1
-        else:
-            channel_count[record.basic_info["channel"]] = 1
-    print(channel_count)
     print("END")

@@ -9,12 +9,12 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from models.transformer import TransformerEncoderClassifier, loss_fn, metrics
-# from models.cnn import CNNClassifier, loss_fn, metrics
-# from models.lstm import LSTMClassifier, loss_fn, metrics  # TODO CONFIG HERE
+from models.transformer import TransformerEncoderClassifier
+from models.cnn import CNNClassifier
+from models.lstm import LSTMClassifier  # TODO CONFIG HERE
 import utils
 from evaluate import evaluate
-from dataloader import AmariDataLoaders, SrsRANDataLoaders
+from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -169,16 +169,16 @@ if __name__ == "__main__":
         params.cuda_index = -1
 
     # set random seed for reproducibility
-    torch.manual_seed(42)
+    torch.manual_seed(params.random_seed)
     if params.cuda_index > -1:
-        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed(params.random_seed)
 
     # set logger
     utils.set_logger(os.path.join(args.experiment_dir, "train.log"))
     logging.info("Loading the dataset...")
 
     # load data
-    # dataloaders = AmariDataLoaders(
+    # dataloaders = AmariNSADataLoaders(
     #     params=params,
     #     feature_path=os.path.join(args.experiment_dir, "features.json"),
     #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
@@ -188,33 +188,41 @@ if __name__ == "__main__":
     #     ]],
     #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
     # )
-    dataloaders = SrsRANDataLoaders(
+    train_val_dataloaders = SrsRANLteDataLoaders(
         params=params,
-        read_npz_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
+        read_npz_paths=[
+            # "data/srsRAN/dataset_Xy_6040.npz",
+            # "data/srsRAN/dataset_Xy_6550.npz",
+            "data/srsRAN/dataset_Xy_8080.npz"
+        ],
+        split_percentages=[0.8, 0.2, 0]
     )
-    # TODO: read from npz, maybe share this similar step with ml, move paths to json
-    train_dataloader = dataloaders.train
-    val_dataloader = dataloaders.val
+    train_dataloader = train_val_dataloaders.train
+    val_dataloader = train_val_dataloaders.val
     params.train_size = len(train_dataloader.dataset)
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    classifier = TransformerEncoderClassifier()  # TODO CONFIG HERE
-    # transformer = TransformerClassifier(
-    #     params=params,
-    #     embed_dim=dataloaders.num_features*2,  # TODO: move this *2 upper
-    #     num_classes=dataloaders.num_classes
+    # classifier = LSTMClassifier(
+    #     embedding_len=59,
+    #     num_classes=10
     # )
+    classifier = TransformerEncoderClassifier(
+        raw_embedding_len=59,
+        sequence_length=10,
+        num_classes=10,
+        downstream_model="lstm"
+    )
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
     optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate)
     train(
         model=classifier,
         optimizer=optimizer,
-        loss_fn=loss_fn,
+        loss_fn=utils.loss_fn,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        metrics=metrics,
+        metrics=utils.metrics,
         params=params,
         experiment_dir=args.experiment_dir
     )

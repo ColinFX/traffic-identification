@@ -706,7 +706,7 @@ if __name__ == "__main__":
 
     # Unit test of SrsRANLteLogFile
     logfile = SrsRANLteLogFile(
-        read_path="data/srsRAN/srsenb1020/tmeeting_audio_6550.log",
+        read_path="data/srsRAN/srsue1023/ue5.log",
         label="test",
         window_size=1,
         tbs_threshold=0,

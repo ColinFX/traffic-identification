@@ -7,8 +7,9 @@ import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pickle
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, random_split, TensorDataset
 import tqdm
 from sklearn.decomposition import PCA
 from sklearn.exceptions import NotFittedError
@@ -19,7 +20,7 @@ from preprocess import SrsRANLteRecord, AmariNSARecord, SrsRANLteLogFile, AmariN
 
 
 class SrsRANLteHybridEncoder:
-    """Embed a list of records, modify embedded_message of each record directly during fitting"""
+    """Embed a list of records, modify embedded_message of each record directly during transformation"""
     def __init__(self):
         self.channels: List[str] = utils.srsRANLte_channels
         self.channels_minmax_columns: List[List[str]] = []
@@ -33,24 +34,27 @@ class SrsRANLteHybridEncoder:
     def _reset(self):
         self.channels_minmax_columns = [[] for _ in self.channels]
         self.channels_onehot_columns = [[] for _ in self.channels]
-        self.channels_minmax_scalers = [MinMaxScaler() for _ in self.channels]
-        self.channels_onehot_encoders = [OneHotEncoder(drop="first", sparse_output=False) for _ in self.channels]
+        self.channels_minmax_scalers = [MinMaxScaler(clip=False) for _ in self.channels]
+        self.channels_onehot_encoders = [
+            OneHotEncoder(drop="first", sparse_output=False, handle_unknown="ignore") for _ in self.channels
+        ]
         self.channels_embedded_columns = [[] for _ in self.channels]
         self.fitted = False
 
     def fit_embed(self, records: List[SrsRANLteRecord]):
         self._reset()
-        for idx, channel in enumerate(t := tqdm.tqdm(self.channels)):
-            t.set_postfix({"fitting_channel": channel})
+        for idx, channel in enumerate(self.channels):
             records_channel = [record for record in records if record.basic_info["channel"] == channel]
             df_raw = pd.DataFrame([record.message for record in records_channel])
             df_raw = df_raw.fillna("-1")
-            for column in df_raw.columns:
+            for column in (t := tqdm.tqdm(df_raw.columns)):
+                t.set_postfix({"fitting_channel": channel, "column": column})
                 try:
                     df_raw[column] = df_raw[column].apply(eval)
                     self.channels_minmax_columns[idx].append(column)
                 except (NameError, TypeError, SyntaxError) as _:
                     self.channels_onehot_columns[idx].append(column)
+                t.set_postfix({"fitting_channel": channel})
             df_embedded = pd.DataFrame()
             if self.channels_minmax_columns[idx]:
                 scaled = pd.DataFrame(
@@ -72,11 +76,14 @@ class SrsRANLteHybridEncoder:
     def embed(self, records: List[SrsRANLteRecord]):
         if not self.fitted:
             raise NotFittedError("This SrsRANLteHybridEncoder instance is not fitted yet. ")
-        for idx, channel in enumerate(t := tqdm.tqdm(self.channels)):
-            t.set_postfix({"embedding_channel": channel})
+        for idx, channel in enumerate(self.channels):
             records_channel = [record for record in records if record.basic_info["channel"] == channel]
             df_raw = pd.DataFrame([record.message for record in records_channel])
             df_raw = df_raw.fillna("-1")
+            for minmax_column in (t := tqdm.tqdm(self.channels_minmax_columns[idx])):
+                t.set_postfix({"embedding_channel": channel, "minmax_column": minmax_column})
+                df_raw[minmax_column] = df_raw[minmax_column].apply(utils.rough_eval)
+                t.set_postfix({"embedding_channel": channel})
             df_embedded = pd.DataFrame()
             if self.channels_minmax_columns[idx]:
                 scaled = pd.DataFrame(
@@ -107,14 +114,32 @@ class SrsRANLteDataset(Dataset):
             hybrid_encoder: SrsRANLteHybridEncoder = SrsRANLteHybridEncoder(),
             label_encoder: LabelEncoder = LabelEncoder(),
             save_path: str = None,
-            read_npz_path: str = None
+            read_npz_paths: List[str] = None
     ):
-        if not params.re_preprocess and read_npz_path:
+        """
+        To load dataset directly from one or multiple npz file: set re_preprocess of params to False and pass a list
+        of npz paths to `read_npz_paths` params.
+
+        To preprocess the dataset from raw log files: set re_preprocess of params to True and pass a list of log paths
+        to `read_log_paths` with a list of corresponding ground truth labels to `labels`. Pre-fitted feature encoder
+        and label encoder can be used by passing encoder instances to `hybrid_encoder` and `label_encoder`.
+        """
+        if not params.re_preprocess and read_npz_paths:
             self.re_preprocessed: bool = False
-            Xy = np.load(read_npz_path)
+            Xy = np.load(read_npz_paths[0])
             self.X: np.ndarray = Xy["X"]
             self.y: np.ndarray = Xy["y"]
+            for read_npz_path in read_npz_paths[1:]:
+                Xy = np.load(read_npz_path)
+                self.X = np.concatenate([self.X, Xy["X"]], axis=0)
+                self.y = np.concatenate([self.y, Xy["y"]], axis=0)
         elif read_log_paths and labels:
+            if len(read_log_paths) != len(labels):
+                raise ValueError(
+                    "Found input read log paths and labels with inconsistent numbers: [{}, {}]".format(
+                        len(read_log_paths), len(labels)
+                    )
+                )
             self.re_preprocessed: bool = True
             logfiles: List[SrsRANLteLogFile] = SrsRANLteDataset._construct_logfiles(params, read_log_paths, labels)
             self.hybrid_encoder = hybrid_encoder
@@ -122,9 +147,10 @@ class SrsRANLteDataset(Dataset):
             self.X: np.ndarray = self._form_dataset_X(logfiles)
             self.label_encoder = label_encoder
             self.y: np.ndarray = self._form_dataset_y(logfiles)
-            self._save_Xy(save_path)
+            if save_path:
+                np.savez(save_path, X=self.X, y=self.y)
         else:
-            raise TypeError("Failed to load dataset from npz file or log files")
+            raise TypeError("__init__() failed to neither construct nor load dataset")
 
     @staticmethod
     def _construct_logfiles(
@@ -164,11 +190,6 @@ class SrsRANLteDataset(Dataset):
         else:
             return self.label_encoder.fit_transform(raw_y)
 
-    def _save_Xy(self, save_path: str):
-        """Write preprocessed X and y to file for further usage"""
-        if save_path:
-            np.savez(save_path, X=self.X, y=self.y)
-
     def __len__(self):
         return self.X.shape[0]
 
@@ -176,7 +197,7 @@ class SrsRANLteDataset(Dataset):
         return torch.tensor(self.X[idx], dtype=torch.float32), int(self.y[idx])
 
 
-class AmariDataset(Dataset):
+class AmariNSADataset(Dataset):
     def __init__(
             self,
             params: utils.HyperParams,
@@ -198,14 +219,16 @@ class AmariDataset(Dataset):
             self.y: np.ndarray = Xy["y"]
         elif read_log_paths and timetables:
             self.re_preprocessed: bool = True
-            self.logfiles: List[AmariNSALogFile] = AmariDataset._construct_logfiles(params, read_log_paths, timetables)
+            self.logfiles: List[AmariNSALogFile] = AmariNSADataset._construct_logfiles(
+                params, read_log_paths, timetables
+            )
             self._embed_features(params)
             self.label_encoder = LabelEncoder()
             self.X: np.ndarray = self._form_dataset_X()
             self.y: np.ndarray = self._form_dataset_y()
             self._save_Xy(save_path)
         else:
-            raise TypeError("Failed to load AmariDataset from npz file or log files")
+            raise TypeError("Failed to load AmariNSADataset from npz file or log files")
 
     @staticmethod
     def _construct_logfiles(
@@ -383,36 +406,51 @@ class AmariDataset(Dataset):
         print("\n")
 
 
-class SrsRANDataLoaders:
+class SrsRANLteDataLoaders:
     def __init__(
             self,
             params: utils.HyperParams,
             read_log_paths: List[str] = None,
             labels: List[str] = None,
+            hybrid_encoder: SrsRANLteHybridEncoder = SrsRANLteHybridEncoder(),
+            label_encoder: LabelEncoder = LabelEncoder(),
             save_path: str = None,
-            read_npz_path: str = None
+            read_npz_paths: List[str] = None,
+            split_percentages: List[float] = None
     ):
-        self.dataset = SrsRANLteDataset(params, read_log_paths, labels, save_path, read_npz_path)
-        split_datasets = random_split(
-            self.dataset,
-            lengths=[
+        """
+        Split percentages given in params can be overwritten by passing percentages to `split_percentages`.
+        """
+        self.dataset = SrsRANLteDataset(
+            params,
+            read_log_paths,
+            labels,
+            hybrid_encoder,
+            label_encoder,
+            save_path,
+            read_npz_paths
+        )
+        if not split_percentages:
+            split_percentages = [
                 (1 - params.split_val_percentage - params.split_test_percentage),
                 params.split_val_percentage,
                 params.split_test_percentage
-            ],
+            ]
+        split_datasets = random_split(
+            self.dataset,
+            lengths=split_percentages,
             generator=torch.Generator().manual_seed(params.random_seed)
         )
-        self.num_features: int = params.pca_n_components * sum([
-            len(channels) for channels in utils.amariNSA_channels.values()
-        ])
-        self.num_classes: int = len(set(self.dataset.y))
         # TODO: maybe move this to Dataset so that functions in ml.py can use it directly but not calculate again
-        self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
-        self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
-        self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)
+        if split_percentages[0] > 0:
+            self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
+        if split_percentages[1] > 0:
+            self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
+        if split_percentages[2] > 0:
+            self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)
 
 
-class AmariDataLoaders:
+class AmariNSADataLoaders:
     def __init__(
             self,
             params: utils.HyperParams,
@@ -423,7 +461,7 @@ class AmariDataLoaders:
             read_npz_path: str = None
     ):
         """Get train, validation and test dataloader"""
-        self.dataset = AmariDataset(params, feature_path, read_log_paths, timetables, save_path, read_npz_path)
+        self.dataset = AmariNSADataset(params, feature_path, read_log_paths, timetables, save_path, read_npz_path)
         split_datasets = random_split(
             self.dataset,
             lengths=[
@@ -444,10 +482,10 @@ class AmariDataLoaders:
 
 
 if __name__ == "__main__":
-    # """Unit test of AmariDataset"""
+    # """Unit test of AmariNSADataset"""
     # params = utils.HyperParams(json_path="../experiments/base/params.json")
     # params.re_preprocess = True
-    # dl = AmariDataLoaders(
+    # dl = AmariNSADataLoaders(
     #     params=params,
     #     feature_path="../experiments/base/features.json",
     #     read_log_paths=["../data/NR/1st-example/gnb0.log"],
@@ -460,9 +498,9 @@ if __name__ == "__main__":
     # dl.dataset.plot_tb_len_statistics()
     # dl.dataset.count_feature_combinations()
 
-    # """Unit test of AmariDataLoaders"""
+    # """Unit test of AmariNSADataLoaders"""
     # params = utils.HyperParams(json_path="experiments/base/params.json")
-    # dataloaders = AmariDataLoaders(
+    # dataloaders = AmariNSADataLoaders(
     #     params=params,
     #     feature_path="",
     #     read_log_paths=["data/NR/1st-example/gnb0.log"],
@@ -474,9 +512,106 @@ if __name__ == "__main__":
     #     read_npz_path=""
     # )
 
-    """Unit test of SrsRANLteDataset"""
+    # Unit test of SrsRANLteDataset
+    params = utils.HyperParams(json_path="experiments/base/params.json")
+    hybrid_encoder = SrsRANLteHybridEncoder()
+    label_encoder = LabelEncoder()
+    # 6550
     dataset = SrsRANLteDataset(
-        params=utils.HyperParams(json_path="experiments/base/params.json"),
+        params=params,
+        read_log_paths=[
+            "data/srsRAN/srsenb1020/tmeeting_video_6550.log",
+            "data/srsRAN/srsenb1020/tmeeting_audio_6550.log",
+            "data/srsRAN/srsenb1020/fastping_1721601_6550.log",
+            "data/srsRAN/srsenb1020/zhihu_browse_6550.log",
+            "data/srsRAN/srsenb1020/qqmusic_standard_6550.log",
+            "data/srsRAN/srsenb1020/bilibili_1080p_6550.log",
+            "data/srsRAN/srsenb1020/bilibili_live_6550.log",
+            "data/srsRAN/srsenb1020/tiktok_browse_6550.log",
+            "data/srsRAN/srsenb1020/wget_anaconda_6550.log",
+            "data/srsRAN/srsenb1022/netdisk_upload_6550.log"
+        ],
+        labels=[
+            "tmeeting_video",
+            "tmeeting_audio",
+            "fastping",
+            "zhihu",
+            "qqmusic",
+            "bilibili_video",
+            "bilibili_live",
+            "tiktok",
+            "wget_anaconda",
+            "netdisk_upload"
+        ],
+        hybrid_encoder=hybrid_encoder,
+        label_encoder=label_encoder,
+        save_path="data/srsRAN/dataset_Xy_6550.npz"
+    )
+    with open("hybrid_encoder", 'wb') as f:
+        pickle.dump(hybrid_encoder, f)
+    with open("label_encoder", 'wb') as f:
+        pickle.dump(label_encoder, f)
+    # 6040
+    dataset = SrsRANLteDataset(
+        params=params,
+        read_log_paths=[
+            "data/srsRAN/srsenb1018-2/qqmusic_standard_6040.log",
+            "data/srsRAN/srsenb1018-2/bilibili_480p_6040.log",
+            "data/srsRAN/srsenb1018-2/wget_anaconda_6040.log",
+            "data/srsRAN/srsenb1018-2/bilibili_live_6040.log",
+            "data/srsRAN/srsenb1018-2/tmeeting_video_6040.log",
+            "data/srsRAN/srsenb1018-2/tmeeting_audio_6040.log",
+            "data/srsRAN/srsenb1018-2/zhihu_6040.log",
+            "data/srsRAN/srsenb1018-2/fastping_1721601_6040.log",
+        ],
+        labels=[
+            "qqmusic",
+            "bilibili_video",
+            "wget_anaconda",
+            "bilibili_live",
+            "tmeeting_video",
+            "tmeeting_audio",
+            "zhihu",
+            "fastping"
+        ],
+        hybrid_encoder=hybrid_encoder,
+        label_encoder=label_encoder,
+        save_path="data/srsRAN/dataset_Xy_6040.npz"
+    )
+    # 7060
+    dataset = SrsRANLteDataset(
+        params=params,
+        read_log_paths=[
+            "data/srsRAN/srsenb1020/tmeeting_video_7060.log",
+            "data/srsRAN/srsenb1020/tmeeting_audio_7060.log",
+            "data/srsRAN/srsenb1020/fastping_1721601_7060.log",
+            "data/srsRAN/srsenb1020/zhihu_browse_7060.log",
+            "data/srsRAN/srsenb1020/qqmusic_standard_7060.log",
+            "data/srsRAN/srsenb1020/bilibili_1080p_7060.log",
+            "data/srsRAN/srsenb1020/bilibili_live_7060.log",
+            "data/srsRAN/srsenb1020/tiktok_browse_7060.log",
+            "data/srsRAN/srsenb1020/wget_anaconda_7060.log",
+            "data/srsRAN/srsenb1022/netdisk_upload_7060.log"
+        ],
+        labels=[
+            "tmeeting_video",
+            "tmeeting_audio",
+            "fastping",
+            "zhihu",
+            "qqmusic",
+            "bilibili_video",
+            "bilibili_live",
+            "tiktok",
+            "wget_anaconda",
+            "netdisk_upload"
+        ],
+        hybrid_encoder=hybrid_encoder,
+        label_encoder=label_encoder,
+        save_path="data/srsRAN/dataset_Xy_7060.npz"
+    )
+    # 8080
+    dataset = SrsRANLteDataset(
+        params=params,
         read_log_paths=[
             "data/srsRAN/srsenb1009/qqmusic_standard.log",
             "data/srsRAN/srsenb0926/enb_bilibili_1080.log",
@@ -486,28 +621,35 @@ if __name__ == "__main__":
             "data/srsRAN/srsenb1009/tmeeting_video.log",
             "data/srsRAN/srsenb1009/tmeeting_audio.log",
             "data/srsRAN/srsenb1009/zhihu_browse.log",
-            "data/srsRAN/srsenb1009/fastping_1721601.log"
+            "data/srsRAN/srsenb1009/fastping_1721601.log",
+            "data/srsRAN/srsenb1022/netdisk_upload_8080.log"
         ],
         labels=[
-            "qqmusic_standard",
+            "qqmusic",
             "bilibili_video",
             "wget_anaconda",
             "bilibili_live",
-            "tiktok_browse",
+            "tiktok",
             "tmeeting_video",
             "tmeeting_audio",
-            "zhihu_browse",
-            "fastping_1721601"
+            "zhihu",
+            "fastping",
+            "netdisk_upload"
         ],
-        # save_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
+        hybrid_encoder=hybrid_encoder,
+        label_encoder=label_encoder,
+        save_path="data/srsRAN/dataset_Xy_8080.npz"
     )
-    print(dataset.hybrid_encoder.channels_embedded_columns)
-    print(dataset.hybrid_encoder.get_channel_n_components())
+    print(label_encoder.classes_)
+    print(hybrid_encoder.channels_minmax_columns)
+    print(hybrid_encoder.channels_onehot_columns)
+    print(hybrid_encoder.channels_embedded_columns)
+
     # print(dataset.channel_n_components)
     # print(dataset.n_samples_of_classes)
 
-    # """Unit test of SrsRANDataLoaders"""
-    # dataloaders = SrsRANDataLoaders(
+    # """Unit test of SrsRANLteDataLoaders"""
+    # dataloaders = SrsRANLteDataLoaders(
     #     params=utils.HyperParams(json_path="experiments/base/params.json"),
     #     read_npz_path="data/srsRAN/srsenb1009/dataset_Xy.npz"
     # )

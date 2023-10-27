@@ -19,7 +19,7 @@ from sklearn.tree import ExtraTreeClassifier
 from xgboost import XGBClassifier
 
 import utils
-from dataloader import AmariDataset, SrsRANLteDataset
+from dataloader import AmariNSADataset, SrsRANLteDataset
 
 
 parser = argparse.ArgumentParser()
@@ -30,7 +30,7 @@ parser.add_argument("--experiment_dir", default="../experiments/base")  # hyper-
 def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray]:
     """Read dataset from npz file or preprocess from raw log file"""
     if params.re_preprocess:
-        dataset = AmariDataset(
+        dataset = AmariNSADataset(
             params=params,
             feature_path=os.path.join(args.experiment_dir, "features.json"),
             read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
@@ -45,7 +45,7 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray]:
             params=params,
             read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
         )
-        # dataset = AmariDataset(
+        # dataset = AmariNSADataset(
         #     params=params,
         #     feature_path=os.path.join(args.experiment_dir, "features.json"),
         #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")

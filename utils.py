@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Dict, List, Tuple
 
+import numpy as np
 import torch
 
 
@@ -139,24 +140,38 @@ def load_checkpoint(
     return checkpoint
 
 
-def get_feature_map(feature_path: str) -> Dict[str, Dict[str, List[str]]]:
+def loss_fn(outputs: torch.Tensor, labels: torch.Tensor) -> torch.FloatTensor:
     """
-    Read feature map from json containing key features to be taken by ML/DL models
-    Return:
-        feature_map: Dict[str, Dict[str, List[str]]] with first level indexing for different physical layer channels
-        and second level indexing for different info fields of AmariNSARecord, each list containing all wanted features from
-        that channel in that info field
+    Args:
+        * outputs: (torch.FloatTensor) output of the model, shape: batch_size * 2
+        * labels: (torch.Tensor) ground truth label of the image, shape: batch_size with each element a value in [0, 1]
+    Returns:
+        * loss: (torch.FloatTensor) cross entropy loss for all images in the batch
     """
-    with open(feature_path, 'r') as f:
-        return json.load(f)
+    loss = torch.nn.CrossEntropyLoss()
+    return loss(outputs, labels)
 
 
-def is_number(string: str) -> bool:
+def accuracy(outputs: np.ndarray[np.float32], labels: np.ndarray[np.int64]) -> np.float64:
+    """
+    Args:
+        * outputs: (np.ndarray) outpout of the model, shape: batch_size * 2
+        * labels: (np.ndarray) ground truth label of the image, shape: batch_size with each element a value in [0, 1]
+    Returns:
+        * accuracy: (float) in [0,1]
+    """
+    outputs = np.argmax(outputs, axis=1)
+    return np.sum(outputs == labels) / float(labels.size)
+
+
+metrics = {"accuracy": accuracy}
+
+
+def rough_eval(string: str) -> float:
     try:
-        eval(string)
-        return True
+        return eval(string)
     except (NameError, TypeError, SyntaxError) as _:
-        return False
+        return -1
 
 
 srsRANLte_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]

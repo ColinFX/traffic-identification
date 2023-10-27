@@ -6,11 +6,13 @@ from typing import Callable, Iterator
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, Dataset, random_split, TensorDataset
 from tqdm import trange
 
-from models.transformer import TransformerEncoderClassifier, loss_fn, metrics
+from models.transformer import TransformerEncoderClassifier
+from models.lstm import LSTMClassifier
 import utils
-from dataloader import AmariDataLoaders
+from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -77,40 +79,53 @@ if __name__ == "__main__":
         params.cuda_index = -1
 
     # set random seed for reproducibility
-    torch.manual_seed(42)
+    torch.manual_seed(params.random_seed)
     if params.cuda_index > -1:
-        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed(params.random_seed)
 
     # set logger
     utils.set_logger(os.path.join(args.experiment_dir, "test.log"))
     logging.info("Loading the dataset...")
 
     # load data
-    dataloaders = AmariDataLoaders(
+    test_dataloaders = SrsRANLteDataLoaders(
         params=params,
-        feature_path=os.path.join(args.experiment_dir, "features.json"),
-        read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
-        timetables=[[
-            ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-            ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-        ]],
-        read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
-        # TODO: move all these processing to json file
+        read_npz_paths=["data/srsRAN/dataset_Xy_7060.npz"],
+        split_percentages=[0, 0, 1.0]
     )
-    test_data_loader = dataloaders.test
-    params.test_size = len(test_data_loader.dataset)
+
+    # Xy = np.load("data/srsRAN/dataset_Xy_7060.npz")
+    # test_dataloader = DataLoader(dataset=TensorDataset(torch.tensor(Xy["X"], dtype=torch.float32), torch.tensor(Xy["y"], dtype=torch.float32)))
+
+    # dataloaders = AmariNSADataLoaders(
+    #     params=params,
+    #     feature_path=os.path.join(args.experiment_dir, "features.json"),
+    #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
+    #     timetables=[[
+    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
+    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
+    #     ]],
+    #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+    # )
+    test_dataloader = test_dataloaders.test
+    params.test_size = len(test_dataloader.dataset)
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    classifier = TransformerEncoderClassifier()
+    classifier = TransformerEncoderClassifier(
+        raw_embedding_len=59,
+        sequence_length=10,
+        num_classes=10,
+        downstream_model="lstm"
+    )
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
     utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), classifier)
     test_metrics = evaluate(
         model=classifier,
-        loss_fn=loss_fn,
-        data_iterator=iter(test_data_loader),  # TODO: rename disgusting data_loader to dataloader
-        metrics=metrics,
+        loss_fn=utils.loss_fn,
+        data_iterator=iter(test_dataloader),
+        metrics=utils.metrics,
         params=params,
         num_steps=num_steps
     )

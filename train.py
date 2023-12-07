@@ -9,12 +9,12 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from models.transformer import TransformerEncoderClassifier
-from models.cnn import CNNClassifier
-from models.lstm import LSTMClassifier  # TODO CONFIG HERE
-import utils
-from evaluate import evaluate
 from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
+from evaluate import evaluate
+from models.cnn import CNNClassifier
+from models.lstm import LSTMClassifier
+from models.transformer import TransformerEncoderClassifier
+import utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     #     ]],
     #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
     # )
-    train_val_dataloaders = SrsRANLteDataLoaders(
+    dataloaders = SrsRANLteDataLoaders(
         params=params,
         read_npz_paths=[
             # "data/srsRAN/dataset_Xy_6040.npz",
@@ -197,21 +197,21 @@ if __name__ == "__main__":
         ],
         split_percentages=[0.8, 0.2, 0]
     )
-    train_dataloader = train_val_dataloaders.train
-    val_dataloader = train_val_dataloaders.val
+    train_dataloader = dataloaders.train
+    val_dataloader = dataloaders.val
     params.train_size = len(train_dataloader.dataset)
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    # classifier = LSTMClassifier(
-    #     embedding_len=59,
-    #     num_classes=10
+    # classifier = TransformerEncoderClassifier(
+    #     raw_embedding_len=59,
+    #     sequence_length=10,
+    #     num_classes=10,
+    #     downstream_model="lstm"
     # )
-    classifier = TransformerEncoderClassifier(
-        raw_embedding_len=59,
-        sequence_length=10,
-        num_classes=10,
-        downstream_model="lstm"
+    classifier = LSTMClassifier(
+        embedding_len=59,
+        num_classes=10
     )
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))

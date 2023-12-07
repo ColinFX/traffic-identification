@@ -6,13 +6,14 @@ from typing import Callable, Iterator
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split, TensorDataset
 from tqdm import trange
 
-from models.transformer import TransformerEncoderClassifier
-from models.lstm import LSTMClassifier
-import utils
 from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
+from models.cnn import CNNClassifier
+from models.lstm import LSTMClassifier
+from models.transformer import TransformerEncoderClassifier
+import utils
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/NR/1st-example")
@@ -88,15 +89,6 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    test_dataloaders = SrsRANLteDataLoaders(
-        params=params,
-        read_npz_paths=["data/srsRAN/dataset_Xy_7060.npz"],
-        split_percentages=[0, 0, 1.0]
-    )
-
-    # Xy = np.load("data/srsRAN/dataset_Xy_7060.npz")
-    # test_dataloader = DataLoader(dataset=TensorDataset(torch.tensor(Xy["X"], dtype=torch.float32), torch.tensor(Xy["y"], dtype=torch.float32)))
-
     # dataloaders = AmariNSADataLoaders(
     #     params=params,
     #     feature_path=os.path.join(args.experiment_dir, "features.json"),
@@ -107,16 +99,25 @@ if __name__ == "__main__":
     #     ]],
     #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
     # )
-    test_dataloader = test_dataloaders.test
+    dataloaders = SrsRANLteDataLoaders(
+        params=params,
+        read_npz_paths=["data/srsRAN/dataset_Xy_7060.npz"],
+        split_percentages=[0, 0, 1.0]
+    )
+    test_dataloader = dataloaders.test
     params.test_size = len(test_dataloader.dataset)
     num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    classifier = TransformerEncoderClassifier(
-        raw_embedding_len=59,
-        sequence_length=10,
-        num_classes=10,
-        downstream_model="lstm"
+    # classifier = TransformerEncoderClassifier(
+    #     raw_embedding_len=59,
+    #     sequence_length=10,
+    #     num_classes=10,
+    #     downstream_model="lstm"
+    # )
+    classifier = LSTMClassifier(
+        embedding_len=59,
+        num_classes=10
     )
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))

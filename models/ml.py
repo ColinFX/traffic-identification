@@ -43,7 +43,7 @@ def get_data(params: utils.HyperParams) -> Tuple[np.ndarray, np.ndarray]:
     else:
         dataset = SrsRANLteDataset(
             params=params,
-            read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+            read_npz_paths=[os.path.join(args.data_dir, "dataset_Xy.npz")]
         )
         # dataset = AmariNSADataset(
         #     params=params,

@@ -396,7 +396,7 @@ class SrsRANLteLogFile:
                 self.records.append(record)
         self._filter_phy_drb_records()
         self._add_record_periods()
-        self.valid_duration: datetime.timedelta = self._trim_beginning_end(delta_begin, delta_end)
+        self.valid_duration: datetime.timedelta = self._trim_head_tail(delta_begin, delta_end)
         self.samples: List[SrsRANLteSample] = self._regroup_records(window_size)
         self._filter_samples(tbs_threshold)
 
@@ -432,19 +432,19 @@ class SrsRANLteLogFile:
             record.basic_info["period"] = str(current_period)
             last_subframe = int(record.basic_info["subframe"])
 
-    def _trim_beginning_end(
+    def _trim_head_tail(
             self,
-            delta_begin: datetime.timedelta = datetime.timedelta(seconds=60),
-            delta_end: datetime.timedelta = datetime.timedelta(seconds=10)
+            delta_head: datetime.timedelta = datetime.timedelta(seconds=60),
+            delta_tail: datetime.timedelta = datetime.timedelta(seconds=10)
     ) -> datetime.timedelta:
-        begin_datetime = self.records[0].datetime
+        beginning_datetime = self.records[0].datetime
         end_datetime = self.records[-1].datetime
         trimmed_records: List[SrsRANLteRecord] = []
         for record in self.records:
-            if begin_datetime + delta_begin < record.datetime < end_datetime - delta_end:
+            if beginning_datetime + delta_head < record.datetime < end_datetime - delta_tail:
                 trimmed_records.append(record)
         self.records = trimmed_records
-        return end_datetime - begin_datetime - delta_begin - delta_end
+        return end_datetime - beginning_datetime - delta_head - delta_tail
 
     def _regroup_records(self, window_size: int) -> List[SrsRANLteSample]:
         samples: List[SrsRANLteSample] = []
@@ -493,6 +493,17 @@ class SrsRANLteLogFile:
             else:
                 channel_records[record.basic_info["channel"]] = 1
         return channel_records
+
+    def get_mcs_statistics(self) -> Dict[int, int]:
+        mcs_counter: Dict[int, int] = {}
+        for record in self.records:
+            if "mcs" in record.message.keys():
+                mcs_record = int(record.message["mcs"])
+                if mcs_record in mcs_counter.keys():
+                    mcs_counter[mcs_record] += 1
+                else:
+                    mcs_counter[mcs_record] = 1
+        return dict(sorted(mcs_counter.items()))
 
 
 class AmariNSALogFile:
@@ -706,7 +717,7 @@ if __name__ == "__main__":
 
     # Unit test of SrsRANLteLogFile
     logfile = SrsRANLteLogFile(
-        read_path="data/srsRAN/srsue1023/ue5.log",
+        read_path="data/srsRAN/srsenb0219/bililive66.log",
         label="test",
         window_size=1,
         tbs_threshold=0,
@@ -715,8 +726,9 @@ if __name__ == "__main__":
     print("snr stat: ", logfile.get_snr_statistics())
     print("channel stat: ", logfile.get_channel_statistics())
     print("duration: ", logfile.valid_duration.seconds)
+    print("mcs: ", logfile.get_mcs_statistics())
 
     for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
-        print(th, sum([sample.tb_len >= th for sample in logfile.samples]))
+        print(th, sum([sample.tb_len >= th for sample in logfile.samples]), end=" ")
 
     print("END")

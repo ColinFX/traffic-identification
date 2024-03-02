@@ -1,7 +1,10 @@
 import json
 import logging
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List
+
+from sklearn.exceptions import NotFittedError
+from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
 import numpy as np
 import torch
@@ -72,6 +75,110 @@ class RunningAverage:
 
     def __call__(self) -> float:
         return self.total / float(self.steps)
+
+
+class AdvancedMinMaxScaler:
+    """
+    Modified version of vanilla sklearn.preprocessing.MinMaxScaler allowing `fit` multiple times on different parts of
+    the whole dataset. Instance arguments and all other methods are kept the same usage.
+    """
+    def __init__(self, **kwargs):
+        self.data_max: np.ndarray = np.empty(0)
+        self.data_min: np.ndarray = np.empty(0)
+        self.ever_fit = False
+        self.kwargs = kwargs
+
+    def _form_fake_X(self):
+        return np.stack((self.data_max, self.data_min))
+
+    def fit(self, X):
+        new_scaler = MinMaxScaler(**self.kwargs)
+        new_scaler.fit(X)
+        if not self.ever_fit:
+            self.data_max = new_scaler.data_max_
+            self.data_min = new_scaler.data_min_
+            self.ever_fit = True
+        else:
+            if len(self.data_max) != new_scaler.n_features_in_:
+                raise ValueError(
+                    "X has {} features, but MinMaxScalerAdvanced is expecting {} features as input.".format(
+                        new_scaler.n_features_in_,
+                        len(self.data_max)
+                    )
+                )
+            self.data_max = np.maximum(self.data_max, new_scaler.data_max_)
+            self.data_min = np.minimum(self.data_min, new_scaler.data_min_)
+
+    def transform(self, X):
+        if not self.ever_fit:
+            raise NotFittedError(
+                "This MinMaxScalerAdvanced instance is not fitted yet. "
+                "Call 'fit' at least once before using this estimator."
+            )
+        scaler = MinMaxScaler(**self.kwargs)
+        scaler.fit(self._form_fake_X())
+        return scaler.transform(X)
+
+    def fit_transform(self, X):
+        scaler = MinMaxScaler(**self.kwargs)
+        return scaler.fit_transform(X)
+
+
+class AdvancedOneHotEncoder:
+    """
+    Modified version of vanilla sklearn.preprocessing.OneHotEncoder allowing `fit` multiple times on different parts of
+    the whole dataset. Instance arguments and all other methods are kept the same usage.
+    """
+
+    def __init__(self, **kwargs):
+        self.categories: List[np.ndarray] = []
+        self.ever_fit = False
+        self.kwargs = kwargs
+
+    def _form_fake_X(self):
+        fake_X = []
+        max_feature_categories_num = np.max([len(feature_categories) for feature_categories in self.categories])
+        for category_idx in range(max_feature_categories_num):
+            fake_X.append(
+                [
+                    self.categories[feature_idx][min(category_idx, len(self.categories[feature_idx])-1)]
+                    for feature_idx in range(len(self.categories))
+                ]
+            )
+        return fake_X
+
+    def fit(self, X):
+        new_encoder = OneHotEncoder(**self.kwargs)
+        new_encoder.fit(X)
+        if not self.ever_fit:
+            self.categories = new_encoder.categories_
+            self.ever_fit = True
+        else:
+            if len(self.categories) != new_encoder.n_features_in_:
+                raise ValueError(
+                    "X has {} features, but OneHotEncoderAdvanced is expecting {} features as input.".format(
+                        new_encoder.n_features_in_,
+                        len(self.categories)
+                    )
+                )
+            for feature_idx in range(len(self.categories)):
+                for new_category in new_encoder.categories_[feature_idx]:
+                    if new_category not in self.categories[feature_idx]:
+                        self.categories[feature_idx] = np.append(self.categories[feature_idx], new_category)
+
+    def transform(self, X):
+        if not self.ever_fit:
+            raise NotFittedError(
+                "This OneHotEncoderAdvanced instance is not fitted yet. "
+                "Call 'fit' at least once before using this estimator."
+            )
+        encoder = OneHotEncoder(**self.kwargs)
+        encoder.fit(self._form_fake_X())
+        return encoder.transform(X)
+
+    def fit_transform(self, X):
+        encoder = OneHotEncoder(**self.kwargs)
+        return encoder.fit_transform(X)
 
 
 def set_logger(log_path: str):

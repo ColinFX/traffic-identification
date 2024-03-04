@@ -2,10 +2,12 @@ import abc
 import csv
 import datetime
 import json
+import os
 import re
 from typing import Dict, List, Match, Pattern, Tuple
 
 import numpy as np
+import pickle
 import tqdm
 
 import utils
@@ -223,6 +225,7 @@ class SrsRANLteSample:
         self.window_size = window_size
         self.tb_len: int = self._count_tb_len()
         self.label: str = self._get_sample_label()
+        self.x: np.ndarray = np.empty(0)
 
     def _count_tb_len(self) -> int:
         tb_len_sum: int = 0
@@ -240,14 +243,14 @@ class SrsRANLteSample:
                 voting[record.label] = 1
         return max(voting, key=voting.get)
 
-    def form_sample_X(self, channel_n_components: Dict[str, int]):
+    def form_sample_X(self, channels_columns_num: List[int]):
         raw_X: List[List[int or float]] = []
         for subframe in range(
                 self.frame_cycle * self.window_size * 10,
                 (self.frame_cycle+1) * self.window_size * 10
         ):
             raw_X_subframe: List[float] = []
-            for channel in channel_n_components.keys():
+            for channel_idx, channel in enumerate(utils.srsRANLte_channels):
                 channel_in_subframe_flag = False
                 for record in self.records:
                     if (
@@ -258,7 +261,7 @@ class SrsRANLteSample:
                         raw_X_subframe.extend(record.embedded_message)
                         break
                 if not channel_in_subframe_flag:
-                    raw_X_subframe.extend([0] * channel_n_components[channel])
+                    raw_X_subframe.extend([0] * channels_columns_num[channel_idx])
             raw_X.append(raw_X_subframe)
         return np.array(raw_X)
 
@@ -475,6 +478,10 @@ class SrsRANLteLogFile:
             if sample.tb_len >= threshold and sample.label:
                 filtered_samples.append(sample)
         self.samples = filtered_samples
+
+    def form_sample_xs(self, channels_columns_num: List[int]):
+        for sample in self.samples:
+            sample.x = sample.form_sample_X(channels_columns_num)
 
     def get_snr_statistics(self) -> Dict[str, float]:
         """Get mean uplink (from UE to ENB) signal-to-noise ratio. """
@@ -700,6 +707,18 @@ class AmariNSALogFile:
 
 
 if __name__ == "__main__":
+    data_folder = "data/srsRAN/srsenb0219"
+    for file_path in utils.listdir_with_suffix(data_folder, ".log"):
+        label = os.path.splitext(os.path.split(file_path)[1])[0]
+        logfile = SrsRANLteLogFile(
+            read_path=file_path,
+            label=label,
+            window_size=1,
+            tbs_threshold=0
+        )
+        with open(os.path.join(data_folder, label+".pkl"), "wb") as file:
+            pickle.dump(logfile, file)
+
     # # Unit test of AmariNSALogFile
     # logfile = AmariNSALogFile(
     #     read_path="data/NR/1st-example/gnb0.log",
@@ -715,20 +734,18 @@ if __name__ == "__main__":
     # logfile.export_json(save_path="data/NR/1st-example/export.json")
     # logfile.export_csv(save_path="data/NR/1st-example/export.csv")
 
-    # Unit test of SrsRANLteLogFile
-    logfile = SrsRANLteLogFile(
-        read_path="data/srsRAN/srsenb0219/bililive66.log",
-        label="test",
-        window_size=1,
-        tbs_threshold=0,
-        # delta_begin=datetime.timedelta(seconds=600)
-    )
-    print("snr stat: ", logfile.get_snr_statistics())
-    print("channel stat: ", logfile.get_channel_statistics())
-    print("duration: ", logfile.valid_duration.seconds)
-    print("mcs: ", logfile.get_mcs_statistics())
-
-    for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
-        print(th, sum([sample.tb_len >= th for sample in logfile.samples]), end=" ")
-
-    print("END")
+    # # Unit test of SrsRANLteLogFile
+    # logfile = SrsRANLteLogFile(
+    #     read_path="data/srsRAN/srsenb0219/bililive66.log",
+    #     label="test",
+    #     window_size=1,
+    #     tbs_threshold=0,
+    #     # delta_begin=datetime.timedelta(seconds=600)
+    # )
+    # print("snr stat: ", logfile.get_snr_statistics())
+    # print("channel stat: ", logfile.get_channel_statistics())
+    # print("duration: ", logfile.valid_duration.seconds)
+    # print("mcs: ", logfile.get_mcs_statistics())
+    #
+    # for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
+    #     print(th, sum([sample.tb_len >= th for sample in logfile.samples]), end=" ")

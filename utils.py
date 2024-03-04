@@ -2,9 +2,10 @@ import json
 import logging
 import os
 from typing import Dict, List
+import warnings
 
 from sklearn.exceptions import NotFittedError
-from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder
 
 import numpy as np
 import torch
@@ -88,7 +89,7 @@ class AdvancedMinMaxScaler:
         self.ever_fit = False
         self.kwargs = kwargs
 
-    def _form_fake_X(self):
+    def _form_fake_X(self) -> np.ndarray:
         return np.stack((self.data_max, self.data_min))
 
     def fit(self, X):
@@ -109,17 +110,20 @@ class AdvancedMinMaxScaler:
             self.data_max = np.maximum(self.data_max, new_scaler.data_max_)
             self.data_min = np.minimum(self.data_min, new_scaler.data_min_)
 
-    def transform(self, X):
+    def transform(self, X) -> np.ndarray:
         if not self.ever_fit:
             raise NotFittedError(
-                "This MinMaxScalerAdvanced instance is not fitted yet. "
+                "This MinMaxScalerAdvanced instance is not fit yet. "
                 "Call 'fit' at least once before using this estimator."
             )
         scaler = MinMaxScaler(**self.kwargs)
         scaler.fit(self._form_fake_X())
-        return scaler.transform(X)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)  # fit on fake_X without feature names
+            transformed_X = scaler.transform(X)
+        return transformed_X
 
-    def fit_transform(self, X):
+    def fit_transform(self, X) -> np.ndarray:
         scaler = MinMaxScaler(**self.kwargs)
         return scaler.fit_transform(X)
 
@@ -169,16 +173,27 @@ class AdvancedOneHotEncoder:
     def transform(self, X):
         if not self.ever_fit:
             raise NotFittedError(
-                "This OneHotEncoderAdvanced instance is not fitted yet. "
+                "This OneHotEncoderAdvanced instance is not fit yet. "
                 "Call 'fit' at least once before using this estimator."
             )
         encoder = OneHotEncoder(**self.kwargs)
         encoder.fit(self._form_fake_X())
-        return encoder.transform(X)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)  # fit on fake_X without feature names
+            encoded_X = encoder.transform(X)
+        return encoded_X
 
     def fit_transform(self, X):
         encoder = OneHotEncoder(**self.kwargs)
         return encoder.fit_transform(X)
+
+    def get_features_num(self):
+        if self.ever_fit:
+            encoder = OneHotEncoder(**self.kwargs)
+            encoder.fit(self._form_fake_X())
+            return len(encoder.get_feature_names_out())
+        else:
+            return 0
 
 
 def set_logger(log_path: str):
@@ -274,11 +289,12 @@ def accuracy(outputs: np.ndarray[np.float32], labels: np.ndarray[np.int64]) -> n
 metrics = {"accuracy": accuracy}
 
 
-def rough_eval(string: str) -> float:
-    try:
-        return eval(string)
-    except (NameError, TypeError, SyntaxError) as _:
-        return -1
+def listdir_with_suffix(parent_dir: str, suffix: str):
+    legitimate_paths: List[str] = []
+    for file_name in os.listdir(parent_dir):
+        if os.path.splitext(file_name)[1] == suffix:
+            legitimate_paths.append(os.path.join(parent_dir, file_name))
+    return legitimate_paths
 
 
 srsRANLte_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
@@ -288,3 +304,4 @@ amariNSA_channels: Dict[str, List[str]] = {
     "03": ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "SRS", "PHICH"],
     "04": ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
 }
+

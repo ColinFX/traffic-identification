@@ -2,7 +2,7 @@ import datetime
 import json
 import logging
 import os.path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import warnings
 
 import matplotlib.pyplot as plt
@@ -33,7 +33,7 @@ class SrsRANLteHybridEncoder:
 
     def _raise_raw_type_error(self):
         raise TypeError(
-            "Input raw should be one of following formats: list of pkl paths, single pkl path, list of "
+            "Input raw should be one of following formats: list of pkl paths_84, single pkl path, list of "
             "SrsRANLteLogfile objects, or single SrsRANLteLogFile object."
         )
 
@@ -223,7 +223,7 @@ class SrsRANLteHybridEncoder:
         """
         Compute `embedded_message` for each record and `x` for each sample in all logfiles.
         Save structured X with labels in new npz files and overwrite original pkl files if input is in format pkl
-        path(s) or if input is in format logfile(s) and save paths are given.
+        path(s) or if input is in format logfile(s) and save paths_84 are given.
         """
         if not self.is_fit:
             raise NotFittedError(
@@ -253,30 +253,47 @@ class SrsRANLteHybridEncoder:
 class SrsRANLteDataset(Dataset):
     def __init__(
             self,
-            params: utils.HyperParams,
-            read_npz_paths: List[str],
-            label_mapping: Dict[str, str] = None
+            read_solitary_npz_paths: Optional[List[str]] = None,
+            read_shared_npz_paths: Optional[List[str]] = None,
+            shared_split_percentage_start: Optional[float] = None,
+            shared_split_percentage_end: Optional[float] = None,
+            label_mapping: Optional[Dict[str, str]] = None
     ):
         self.X: np.ndarray = np.empty(0)
+        self.y: np.ndarray = np.empty(0)
         self.labels: np.ndarray = np.empty(0)
-        for npz_path_idx in range(len(read_npz_paths)):
-            npz_dict = np.load(read_npz_paths[npz_path_idx])
-            logfile_X: np.ndarray = npz_dict["X"]
-            logfile_labels: np.ndarray = npz_dict["labels"]
-            if not npz_path_idx:
-                self.X = logfile_X
-                self.labels = logfile_labels
-            else:
-                self.X = np.concatenate([self.X, npz_dict["X"]], axis=0)
-                self.labels = np.concatenate([self.labels, npz_dict["labels"]], axis=0)
+        if read_solitary_npz_paths:
+            for read_solitary_npz_path in read_solitary_npz_paths:
+                self._add_npz_file(read_solitary_npz_path)
+        if read_shared_npz_paths:
+            for read_shared_npz_path in read_shared_npz_paths:
+                self._add_npz_file(read_shared_npz_path, shared_split_percentage_start, shared_split_percentage_end)
         if label_mapping:
             self.labels = np.array([label_mapping[label] for label in self.labels])
-        self.label_encoder = LabelEncoder()
-        self.y = self.label_encoder.fit_transform(self.labels)
 
-    def save_label_encoder(self, save_dir: str):
-        with open(os.path.join(save_dir, "label_encoder.json"), "w") as f:
-            json.dump(self.label_encoder.__dict__, f)
+    def _add_npz_file(
+            self,
+            read_npz_path: str,
+            shared_split_percentage_start: Optional[float] = None,
+            shared_split_percentage_end: Optional[float] = None
+    ):
+        npz_dict = np.load(read_npz_path)
+        logfile_X: np.ndarray = npz_dict["X"]
+        logfile_labels: np.ndarray = npz_dict["labels"]
+        if shared_split_percentage_start is not None and shared_split_percentage_end is not None:
+            split_start = max(int(shared_split_percentage_start * logfile_X.shape[0]), 0)
+            split_end = min(int(shared_split_percentage_end * logfile_X.shape[0]), logfile_X.shape[0])
+            logfile_X = logfile_X[split_start:split_end]
+            logfile_labels = logfile_labels[split_start:split_end]
+        if not self.X.size > 0:
+            self.X = logfile_X
+            self.labels = logfile_labels
+        else:
+            self.X = np.concatenate([self.X, logfile_X], axis=0)
+            self.labels = np.concatenate([self.labels, logfile_labels], axis=0)
+
+    def encode_labels(self, label_encoder: LabelEncoder):
+        self.y = label_encoder.transform(self.labels)
 
     def __len__(self):
         return self.X.shape[0]
@@ -324,7 +341,7 @@ class AmariNSADataset(Dataset):
             read_paths: List[str],
             timetables: List[List[Tuple[Tuple[datetime.time, datetime.time], str]]]
     ) -> List[AmariNSALogFile]:
-        """Read all logfiles from paths in the given list"""
+        """Read all logfiles from paths_84 in the given list"""
         logfiles: List[AmariNSALogFile] = []
         for idx in (t := tqdm.trange(len(read_paths))):
             t.set_postfix({"read_path": "\""+read_paths[idx]+"\""})
@@ -498,44 +515,87 @@ class SrsRANLteDataLoaders:
     def __init__(
             self,
             params: utils.HyperParams,
-            read_log_paths: List[str] = None,
-            labels: List[str] = None,
-            hybrid_encoder: SrsRANLteHybridEncoder = SrsRANLteHybridEncoder(),
-            label_encoder: LabelEncoder = LabelEncoder(),
-            save_path: str = None,
-            read_npz_paths: List[str] = None,
-            split_percentages: List[float] = None
+            split_percentages: Optional[List[float]] = None,
+            read_train_npz_paths: Optional[List[str]] = None,
+            read_val_test_npz_paths: Optional[List[str]] = None,
+            read_train_val_test_npz_paths: Optional[List[str]] = None,
+            label_mapping: Optional[Dict[str, str]] = None,
+            label_encoder: Optional[LabelEncoder] = None,
+            save_npz_path: Optional[str] = None
     ):
         """
         Split percentages given in params can be overwritten by passing percentages to `split_percentages`.
         """
-        self.dataset = SrsRANLteDataset(
-            params,
-            read_log_paths,
-            labels,
-            hybrid_encoder,
-            label_encoder,
-            save_path,
-            read_npz_paths
-        )
         if not split_percentages:
             split_percentages = [
                 (1 - params.split_val_percentage - params.split_test_percentage),
                 params.split_val_percentage,
                 params.split_test_percentage
             ]
-        split_datasets = random_split(
-            self.dataset,
-            lengths=split_percentages,
-            generator=torch.Generator().manual_seed(params.random_seed)
-        )
-        # TODO: maybe move this to Dataset so that functions in ml.py can use it directly but not calculate again
+        else:
+            split_percentages = [split_percentage/sum(split_percentages) for split_percentage in split_percentages]
+
+        all_labels = np.empty(0)
         if split_percentages[0] > 0:
-            self.train = DataLoader(split_datasets[0], params.batch_size, shuffle=True)
+            self.train_dataset = SrsRANLteDataset(
+                read_solitary_npz_paths=read_train_npz_paths,
+                read_shared_npz_paths=read_train_val_test_npz_paths,
+                shared_split_percentage_start=0.,
+                shared_split_percentage_end=split_percentages[0],
+                label_mapping=label_mapping
+            )
+            all_labels = np.concatenate([all_labels, self.train_dataset.labels])
         if split_percentages[1] > 0:
-            self.val = DataLoader(split_datasets[1], params.batch_size, shuffle=False)
-        if split_percentages[2] > 0:
-            self.test = DataLoader(split_datasets[2], params.batch_size, shuffle=False)
+            self.val_dataset = SrsRANLteDataset(
+                read_solitary_npz_paths=read_val_test_npz_paths,
+                read_shared_npz_paths=read_train_val_test_npz_paths,
+                shared_split_percentage_start=split_percentages[0],
+                shared_split_percentage_end=split_percentages[0]+split_percentages[1],
+                label_mapping=label_mapping
+            )
+            all_labels = np.concatenate([all_labels, self.val_dataset.labels])
+        if len(split_percentages) > 2 and split_percentages[2] > 0:
+            self.test_dataset = SrsRANLteDataset(
+                read_solitary_npz_paths=read_val_test_npz_paths,
+                read_shared_npz_paths=read_train_val_test_npz_paths,
+                shared_split_percentage_start=split_percentages[0]+split_percentages[1],
+                shared_split_percentage_end=1.,
+                label_mapping=label_mapping
+            )
+            all_labels = np.concatenate([all_labels, self.test_dataset.labels])
+        if label_encoder:
+            self.label_encoder = label_encoder
+        else:
+            self.label_encoder = LabelEncoder()
+            self.label_encoder.fit(all_labels)
+
+        if hasattr(self, "train_dataset"):
+            self.train_dataset.encode_labels(self.label_encoder)
+            self.train = DataLoader(self.train_dataset, params.batch_size, shuffle=True)
+        if hasattr(self, "val_dataset"):
+            self.val_dataset.encode_labels(self.label_encoder)
+            self.val = DataLoader(self.val_dataset, params.batch_size, shuffle=False)
+        if hasattr(self, "test_dataset"):
+            self.test_dataset.encode_labels(self.label_encoder)
+            self.test = DataLoader(self.test_dataset, params.batch_size, shuffle=False)
+
+        if save_npz_path:
+            self.save_npz(save_npz_path)
+
+    def save_label_encoder(self, save_pkl_path: str):
+        with open(save_pkl_path, "wb") as f:
+            pickle.dump(self.label_encoder, f)
+
+    def save_npz(self, save_npz_path: str):
+        np.savez(
+            save_npz_path,
+            X_train=self.train_dataset.X if hasattr(self, "train_dataset") else None,
+            X_val=self.val_dataset.X if hasattr(self, "val_dataset") else None,
+            X_test=self.test_dataset.X if hasattr(self, "test_dataset") else None,
+            y_train=self.train_dataset.y if hasattr(self, "train_dataset") else None,
+            y_val=self.val_dataset.y if hasattr(self, "val_dataset") else None,
+            y_test=self.test_dataset.y if hasattr(self, "test_dataset") else None
+        )
 
 
 class AmariNSADataLoaders:
@@ -570,7 +630,35 @@ class AmariNSADataLoaders:
 
 
 if __name__ == "__main__":
-    data_folder = "data/srsRAN/srsenb0219"
+    label_mapping = {}
+    for gain in [66, 69, 72, 75, 78, 81, 84]:
+        for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
+            label_mapping[app + str(gain)] = app
+            label_mapping[app + str(gain) + "_10"] = app
+
+    params = utils.HyperParams(json_path="./experiments/base/params.json")
+
+    paths_84 = utils.listdir_with_suffix("data/srsRAN/srsenb0219", ".npz")
+    paths_84 = [path for path in paths_84 if "84_10" in path]
+    paths_81 = utils.listdir_with_suffix("data/srsRAN/srsenb0219", ".npz")
+    paths_81 = [path for path in paths_81 if "81_10" in path]
+
+    dataloaders = SrsRANLteDataLoaders(
+        params=params,
+        split_percentages=[0.6, 0.2, 0.2],
+        read_train_npz_paths=paths_84,
+        read_val_test_npz_paths=paths_81,
+        label_mapping=label_mapping,
+    )
+
+    import lightgbm as lgb
+    model = lgb.LGBMClassifier()
+    model.fit(dataloaders.train_dataset.X.reshape(-1, 590), dataloaders.train_dataset.y)
+    y_val_pred = model.predict(dataloaders.val_dataset.X.reshape(-1, 590))
+    from sklearn.metrics import accuracy_score
+    print(accuracy_score(y_true=dataloaders.val_dataset.y, y_pred=y_val_pred))
+
+    print("END")
     # hybrid_encoder = SrsRANLteHybridEncoder()
     # hybrid_encoder.collect_columns_metadata(data_folder)
     # hybrid_encoder.load_columns_metadata("data/srsRAN/srsenb0219/columns_metadata.json")
@@ -578,9 +666,9 @@ if __name__ == "__main__":
     # hybrid_encoder.fit(data_folder)
     # with open(os.path.join(data_folder, "hybrid_encoder.pickle"), "wb") as file:
     #     pickle.dump(hybrid_encoder, file)
-    with open("data/srsRAN/srsenb0219/hybrid_encoder.pickle", "rb") as file:
-        hybrid_encoder = pickle.load(file)
-    hybrid_encoder.transform(data_folder)
+    # with open("data/srsRAN/srsenb0219/hybrid_encoder.pickle", "rb") as file:
+    #     hybrid_encoder = pickle.load(file)
+    # hybrid_encoder.transform(data_folder)
 
     # with open("tmp/hybrid_encoder.pkl", "rb") as file:
     #     hybrid_encoder = pickle.load(file)

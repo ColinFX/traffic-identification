@@ -2,10 +2,13 @@ import argparse
 import datetime
 import logging
 import os
+import pickle
 from typing import Callable, Iterator
 
 import numpy as np
+from sklearn.preprocessing import LabelEncoder
 import torch
+from torch.utils.data import TensorDataset, DataLoader
 from tqdm import trange
 
 from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
@@ -16,8 +19,8 @@ import utils
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="data/NR/1st-example")
-parser.add_argument("--experiment_dir", default="experiments/base")  # hyper-parameter json file
+parser.add_argument("--data_dir", default="data/srsRAN/srsenb0219")
+parser.add_argument("--experiment_dir", default="experiments/trial-49")  # hyper-parameter json file
 parser.add_argument("--restore_file", default="best")  # "best" or "last", models weights checkpoint
 
 
@@ -89,36 +92,50 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    # dataloaders = AmariNSADataLoaders(
-    #     params=params,
-    #     feature_path=os.path.join(args.experiment_dir, "features.json"),
-    #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
-    #     timetables=[[
-    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-    #     ]],
-    #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
+    # Option 1: load data from pre-generated npz file
+    # npz_dict = np.load(os.path.join(args.experiment_dir, "train_save.npz"))
+    # test_dataset = TensorDataset(
+    #     torch.Tensor(npz_dict["X_test"]),
+    #     torch.Tensor(npz_dict["y_test"]).type(torch.long)
     # )
+    # test_dataloader = DataLoader(test_dataset, params.batch_size, shuffle=False)
+
+    # Option 2: instantiate new SrsRANLteData
+    label_mapping = {}
+    for gain in [66, 69, 72, 75, 78, 81, 84]:
+        for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
+            label_mapping[app + str(gain)] = app
+            label_mapping[app + str(gain) + "_10"] = app
+    all_paths = utils.listdir_with_suffix(args.data_dir, ".npz")
+    val_test_npz_paths = []
+    for path in all_paths:
+        if "_10" in path and "81" in path:
+            val_test_npz_paths.append(path)
+    with open(os.path.join(args.experiment_dir, "label_encoder.pkl"), "rb") as f:
+        label_encoder: LabelEncoder = pickle.load(f)
     dataloaders = SrsRANLteDataLoaders(
         params=params,
-        read_npz_paths=["data/srsRAN/dataset_Xy_7060.npz"],
-        split_percentages=[0, 0, 1.0]
+        split_percentages=[0, 0, 1],
+        read_val_test_npz_paths=val_test_npz_paths,
+        label_mapping=label_mapping,
+        label_encoder=label_encoder,
+        save_npz_path=os.path.join(args.experiment_dir, "test_save.npz")
     )
     test_dataloader = dataloaders.test
-    params.test_size = len(test_dataloader.dataset)
-    num_steps = (params.test_size + 1) // params.batch_size
 
     # evaluate pipeline
-    # classifier = TransformerEncoderClassifier(
-    #     raw_embedding_len=59,
-    #     sequence_length=10,
-    #     num_classes=10,
-    #     downstream_model="lstm"
+    # classifier = LSTMClassifier(
+    #     embedding_len=59,
+    #     num_classes=6
     # )
-    classifier = LSTMClassifier(
-        embedding_len=59,
-        num_classes=10
+    classifier = TransformerEncoderClassifier(
+        raw_embedding_len=59,
+        sequence_length=10,
+        num_classes=6,
+        upstream_model="linear",
+        downstream_model="linear"
     )
+
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
     utils.load_checkpoint(os.path.join(args.experiment_dir, args.restore_file + ".pth.tar"), classifier)
@@ -128,7 +145,7 @@ if __name__ == "__main__":
         data_iterator=iter(test_dataloader),
         metrics=utils.metrics,
         params=params,
-        num_steps=num_steps
+        num_steps=len(test_dataloader)
     )
 
     # save metrics evaluation result on the restore_file

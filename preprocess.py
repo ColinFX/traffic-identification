@@ -401,7 +401,7 @@ class SrsRANLteLogFile:
         self._add_record_periods()
         self.valid_duration: datetime.timedelta = self._trim_head_tail(delta_begin, delta_end)
         self.samples: List[SrsRANLteSample] = self._regroup_records(window_size)
-        self._filter_samples(tbs_threshold)
+        self.filter_samples(tbs_threshold)
 
     @staticmethod
     def _reformat_record(raw_record: str) -> SrsRANLteRecord or None:
@@ -472,7 +472,7 @@ class SrsRANLteLogFile:
             samples.append(SrsRANLteSample(current_sample_records, current_period, current_frame_cycle, window_size))
         return samples
 
-    def _filter_samples(self, threshold: int):
+    def filter_samples(self, threshold: int):
         filtered_samples: List[SrsRANLteSample] = []
         for sample in self.samples:
             if sample.tb_len >= threshold and sample.label:
@@ -707,17 +707,17 @@ class AmariNSALogFile:
 
 
 if __name__ == "__main__":
-    data_folder = "data/srsRAN/srsenb0219"
-    for file_path in utils.listdir_with_suffix(data_folder, ".log"):
-        label = os.path.splitext(os.path.split(file_path)[1])[0]
-        logfile = SrsRANLteLogFile(
-            read_path=file_path,
-            label=label,
-            window_size=1,
-            tbs_threshold=0
-        )
-        with open(os.path.join(data_folder, label+".pkl"), "wb") as file:
-            pickle.dump(logfile, file)
+    # data_folder = "data/srsRAN/srsenb0219"
+    # for file_path in utils.listdir_with_suffix(data_folder, ".log"):
+    #     label = os.path.splitext(os.path.split(file_path)[1])[0]
+    #     logfile = SrsRANLteLogFile(
+    #         read_path=file_path,
+    #         label=label,
+    #         window_size=1,
+    #         tbs_threshold=0
+    #     )
+    #     with open(os.path.join(data_folder, label+".pkl"), "wb") as file:
+    #         pickle.dump(logfile, file)
 
     # # Unit test of AmariNSALogFile
     # logfile = AmariNSALogFile(
@@ -735,17 +735,17 @@ if __name__ == "__main__":
     # logfile.export_csv(save_path="data/NR/1st-example/export.csv")
 
     # # Unit test of SrsRANLteLogFile
-    # logfile = SrsRANLteLogFile(
-    #     read_path="data/srsRAN/srsenb0219/bililive66.log",
-    #     label="test",
-    #     window_size=1,
-    #     tbs_threshold=0,
-    #     # delta_begin=datetime.timedelta(seconds=600)
-    # )
-    # print("snr stat: ", logfile.get_snr_statistics())
-    # print("channel stat: ", logfile.get_channel_statistics())
-    # print("duration: ", logfile.valid_duration.seconds)
-    # print("mcs: ", logfile.get_mcs_statistics())
-    #
-    # for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
-    #     print(th, sum([sample.tb_len >= th for sample in logfile.samples]), end=" ")
+    logfile = SrsRANLteLogFile(
+        read_path="data/srsRAN/srsenb0219/bililive66.log",
+        label="test",
+        window_size=1,
+        tbs_threshold=0,
+        # delta_begin=datetime.timedelta(seconds=600)
+    )
+    print("snr stat: ", logfile.get_snr_statistics())
+    print("channel stat: ", logfile.get_channel_statistics())
+    print("duration: ", logfile.valid_duration.seconds)
+    print("mcs: ", logfile.get_mcs_statistics())
+
+    for th in [0, 1, 10, 20, 30, 50, 100, 150, 200, 300]:
+        print(th, sum([sample.tb_len >= th for sample in logfile.samples]), end=" ")

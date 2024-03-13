@@ -17,8 +17,8 @@ from models.transformer import TransformerEncoderClassifier
 import utils
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="data/NR/1st-example")
-parser.add_argument("--experiment_dir", default="experiments/base")  # hyper-parameter json file
+parser.add_argument("--data_dir", default="data/srsRAN/srsenb0219")
+parser.add_argument("--experiment_dir", default="experiments/trial-49")  # hyper-parameter json file
 parser.add_argument("--restore_file", default=None)  # "best" or "last", models weights checkpoint
 
 
@@ -153,8 +153,6 @@ def train(
 
     return best_metrics
 
-    # TODO: plot loss during the training after finished
-
 
 if __name__ == "__main__":
     """Train the models on the train and validation set"""
@@ -178,41 +176,44 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    # dataloaders = AmariNSADataLoaders(
-    #     params=params,
-    #     feature_path=os.path.join(args.experiment_dir, "features.json"),
-    #     read_log_paths=[os.path.join(args.data_dir, file) for file in ["gnb0.log"]],
-    #     timetables=[[
-    #         ((datetime.time(9, 48, 20), datetime.time(9, 58, 40)), "navigation_web"),
-    #         ((datetime.time(10, 1, 40), datetime.time(10, 13, 20)), "streaming_youtube")
-    #     ]],
-    #     read_npz_path=os.path.join(args.data_dir, "dataset_Xy.npz")
-    # )
+    label_mapping = {}
+    for gain in [66, 69, 72, 75, 78, 81, 84]:
+        for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
+            label_mapping[app + str(gain)] = app
+            label_mapping[app + str(gain) + "_10"] = app
+
+    all_paths = utils.listdir_with_suffix(args.data_dir, ".npz")
+    train_val_test_npz_paths = []
+    for path in all_paths:
+        if "_10" in path and "81" not in path:
+            train_val_test_npz_paths.append(path)
+
     dataloaders = SrsRANLteDataLoaders(
         params=params,
-        read_npz_paths=[
-            # "data/srsRAN/dataset_Xy_6040.npz",
-            # "data/srsRAN/dataset_Xy_6550.npz",
-            "data/srsRAN/dataset_Xy_8080.npz"
-        ],
-        split_percentages=[0.8, 0.2, 0]
+        read_train_val_test_npz_paths=train_val_test_npz_paths,
+        label_mapping=label_mapping,
+        save_npz_path=os.path.join(args.experiment_dir, "train_save.npz")
     )
+    dataloaders.save_label_encoder(os.path.join(args.experiment_dir, "label_encoder.pkl"))
+
     train_dataloader = dataloaders.train
     val_dataloader = dataloaders.val
     params.train_size = len(train_dataloader.dataset)
     params.val_size = len(val_dataloader.dataset)
 
     # train pipeline
-    # classifier = TransformerEncoderClassifier(
-    #     raw_embedding_len=59,
-    #     sequence_length=10,
-    #     num_classes=10,
-    #     downstream_model="lstm"
+    # classifier = LSTMClassifier(
+    #     embedding_len=59,
+    #     num_classes=6
     # )
-    classifier = LSTMClassifier(
-        embedding_len=59,
-        num_classes=10
+    classifier = TransformerEncoderClassifier(
+        raw_embedding_len=59,
+        sequence_length=10,
+        num_classes=6,
+        upstream_model="linear",
+        downstream_model="linear"
     )
+
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
     optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate)

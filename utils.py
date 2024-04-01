@@ -21,19 +21,25 @@ class HyperParams:
     """
     batch_size: int
     cuda_index: int
-    expansion_factor: int
     learning_rate: float
-    n_heads: int
+    weight_decay: float
+    transformer_target_embedding_len: int
+    transformer_num_head: int
+    transformer_dimension_feedforward: int
+    transformer_dropout: float
+    transformer_activation: str
+    transformer_num_layers: int
+    lstm_hidden_size: int
+    lstm_num_layers: int
+    lstm_dropout: float
+    lstm_bidirectional: bool
+    upstream_model: str
+    downstream_model: str
     num_epochs: int
-    num_layers: int
-    pca_n_components: int
     random_seed: int
-    re_preprocess: bool
     save_summary_steps: int
     split_test_percentage: float
     split_val_percentage: float
-    tb_len_threshold: int
-    window_size: int
     train_size: int
     val_size: int
     test_size: int
@@ -299,9 +305,15 @@ def listdir_with_suffix(parent_dir: str, suffix: str):
 
 srsRANLte_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
 
+srsRANLte_label_mapping: Dict[str, str] = {}
+for gain in [66, 69, 72, 75, 78, 81, 84]:
+    for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
+        srsRANLte_label_mapping[app + str(gain)] = app
+        srsRANLte_label_mapping[app + str(gain) + "_10"] = app
 
 amariNSA_channels: Dict[str, List[str]] = {
     "03": ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "SRS", "PHICH"],
     "04": ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
 }
+
 

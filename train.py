@@ -1,5 +1,4 @@
 import argparse
-import datetime
 import logging
 import os
 from typing import Callable, Iterator
@@ -9,17 +8,19 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
+from dataloader import SrsRANLteDataLoaders
 from evaluate import evaluate
 from models.cnn import CNNClassifier
 from models.lstm import LSTMClassifier
-from models.transformer import TransformerEncoderClassifier
+from models.transformer import TransformerEncoderClassifier, TransformerLSTMClassifier
 import utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/srsRAN/srsenb0219")
-parser.add_argument("--experiment_dir", default="experiments/trial-49")  # hyper-parameter json file
-parser.add_argument("--restore_file", default=None)  # "best" or "last", models weights checkpoint
+parser.add_argument("--experiment_dir", default="experiments/trial-59/78")  # hyper-parameter json file
+parser.add_argument("--restore_file", default=None)
+# pretrained model weight checkpoint for second stage of two-stage training
+parser.add_argument("--zero_shot_keyword", default="78")  # scenario as val and test set for zero-shot
 
 
 def train_epoch(
@@ -51,7 +52,6 @@ def train_epoch(
         # core pipeline
         train_batch, true_labels_batch = next(data_iterator)
         if params.cuda_index > -1:
-            # TODO: write meaning of this variable to doc
             train_batch = train_batch.cuda(device=torch.device(params.cuda_index))
             true_labels_batch = true_labels_batch.cuda(device=torch.device(params.cuda_index))
         predicted_proba_batch: torch.Tensor = model(train_batch)
@@ -176,23 +176,16 @@ if __name__ == "__main__":
     logging.info("Loading the dataset...")
 
     # load data
-    label_mapping = {}
-    for gain in [66, 69, 72, 75, 78, 81, 84]:
-        for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
-            label_mapping[app + str(gain)] = app
-            label_mapping[app + str(gain) + "_10"] = app
-
     all_paths = utils.listdir_with_suffix(args.data_dir, ".npz")
-    train_val_test_npz_paths = []
-    for path in all_paths:
-        if "_10" in path and "81" not in path:
-            train_val_test_npz_paths.append(path)
-
+    train_npz_paths = [path for path in all_paths if "_10" in path and args.zero_shot_keyword not in path]
+    val_test_npz_paths = [path for path in all_paths if "_10" in path and args.zero_shot_keyword in path]
     dataloaders = SrsRANLteDataLoaders(
         params=params,
-        read_train_val_test_npz_paths=train_val_test_npz_paths,
-        label_mapping=label_mapping,
-        save_npz_path=os.path.join(args.experiment_dir, "train_save.npz")
+        split_percentages=[0, 0.75, 0.25],
+        read_train_npz_paths=train_npz_paths,
+        read_val_test_npz_paths=val_test_npz_paths,
+        label_mapping=utils.srsRANLte_label_mapping,
+        # save_npz_path=os.path.join(args.experiment_dir, "train_save.npz")
     )
     dataloaders.save_label_encoder(os.path.join(args.experiment_dir, "label_encoder.pkl"))
 
@@ -201,22 +194,63 @@ if __name__ == "__main__":
     params.train_size = len(train_dataloader.dataset)
     params.val_size = len(val_dataloader.dataset)
 
-    # train pipeline
-    # classifier = LSTMClassifier(
-    #     embedding_len=59,
-    #     num_classes=6
-    # )
+    # prepare model
     classifier = TransformerEncoderClassifier(
         raw_embedding_len=59,
         sequence_length=10,
         num_classes=6,
-        upstream_model="linear",
-        downstream_model="linear"
+        target_embedding_len=params.transformer_target_embedding_len,
+        transformer_num_head=params.transformer_num_head,
+        transformer_dimension_feedforward=params.transformer_dimension_feedforward,
+        transformer_dropout=params.transformer_dropout,
+        transformer_activation=params.transformer_activation,
+        transformer_num_layers=params.transformer_num_layers,
+        lstm_hidden_size=params.lstm_hidden_size,
+        lstm_num_layers=params.lstm_num_layers,
+        lstm_dropout=params.lstm_dropout,
+        lstm_bidirectional=params.lstm_bidirectional,
+        upstream_model=params.upstream_model,
+        downstream_model=params.downstream_model
     )
 
+    # Stage 2 for two-stage training:
+    # pretrained_transformer_encoder = TransformerEncoderClassifier(
+    #     raw_embedding_len=59,
+    #     sequence_length=10,
+    #     num_classes=6,
+    #     target_embedding_len=params.transformer_target_embedding_len,
+    #     transformer_num_head=params.transformer_num_head,
+    #     transformer_dimension_feedforward=params.transformer_dimension_feedforward,
+    #     transformer_dropout=params.transformer_dropout,
+    #     transformer_activation=params.transformer_activation,
+    #     transformer_num_layers=params.transformer_num_layers,
+    #     lstm_hidden_size=params.lstm_hidden_size,
+    #     lstm_num_layers=params.lstm_num_layers,
+    #     lstm_dropout=params.lstm_dropout,
+    #     lstm_bidirectional=params.lstm_bidirectional,
+    #     upstream_model=params.upstream_model,
+    #     downstream_model=params.downstream_model
+    # )
+    # utils.load_checkpoint(
+    #     os.path.join(args.restore_file_path),
+    #     pretrained_transformer_encoder
+    # )
+    # lstm_classifier = LSTMClassifier(
+    #     embedding_len=params.transformer_target_embedding_len,
+    #     num_classes=6,
+    #     num_layers=params.lstm_num_layers,
+    #     dropout=params.lstm_dropout,
+    #     bidirectional=params.lstm_bidirectional
+    # )
+    # classifier = TransformerLSTMClassifier(
+    #     pretrained_transformer_encoder=pretrained_transformer_encoder,
+    #     lstm_classifier=lstm_classifier
+    # )
+
+    # train
     if params.cuda_index > -1:
         classifier.cuda(device=torch.device(params.cuda_index))
-    optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate)
+    optimizer = torch.optim.Adam(classifier.parameters(), lr=params.learning_rate, weight_decay=params.weight_decay)
     train(
         model=classifier,
         optimizer=optimizer,

@@ -1,6 +1,5 @@
 import datetime
 import json
-import logging
 import os.path
 from typing import Dict, List, Tuple, Optional
 import warnings
@@ -10,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split, TensorDataset
+from torch.utils.data import DataLoader, Dataset, random_split
 import tqdm
 from sklearn.decomposition import PCA
 from sklearn.exceptions import NotFittedError
@@ -526,7 +525,10 @@ class SrsRANLteDataLoaders:
         """
         Split percentages given in params can be overwritten by passing percentages to `split_percentages`.
         """
-        if not split_percentages:
+        if read_train_val_test_npz_paths and (read_train_npz_paths or read_val_test_npz_paths):
+            raise ValueError("Unexpected dataloader scenario.")
+
+        if not split_percentages or len(split_percentages) != 3:
             split_percentages = [
                 (1 - params.split_val_percentage - params.split_test_percentage),
                 params.split_val_percentage,
@@ -536,7 +538,7 @@ class SrsRANLteDataLoaders:
             split_percentages = [split_percentage/sum(split_percentages) for split_percentage in split_percentages]
 
         all_labels = np.empty(0)
-        if split_percentages[0] > 0:
+        if read_train_npz_paths or (read_train_val_test_npz_paths and split_percentages[0] > 0):
             self.train_dataset = SrsRANLteDataset(
                 read_solitary_npz_paths=read_train_npz_paths,
                 read_shared_npz_paths=read_train_val_test_npz_paths,
@@ -545,23 +547,41 @@ class SrsRANLteDataLoaders:
                 label_mapping=label_mapping
             )
             all_labels = np.concatenate([all_labels, self.train_dataset.labels])
-        if split_percentages[1] > 0:
-            self.val_dataset = SrsRANLteDataset(
-                read_solitary_npz_paths=read_val_test_npz_paths,
-                read_shared_npz_paths=read_train_val_test_npz_paths,
-                shared_split_percentage_start=split_percentages[0],
-                shared_split_percentage_end=split_percentages[0]+split_percentages[1],
-                label_mapping=label_mapping
-            )
+        if split_percentages[1] > 0 and (read_train_val_test_npz_paths or read_val_test_npz_paths):
+            if read_train_val_test_npz_paths:
+                self.val_dataset = SrsRANLteDataset(
+                    read_solitary_npz_paths=None,
+                    read_shared_npz_paths=read_train_val_test_npz_paths,
+                    shared_split_percentage_start=split_percentages[0],
+                    shared_split_percentage_end=split_percentages[0]+split_percentages[1],
+                    label_mapping=label_mapping
+                )
+            elif read_val_test_npz_paths:
+                self.val_dataset = SrsRANLteDataset(
+                    read_solitary_npz_paths=None,
+                    read_shared_npz_paths=read_val_test_npz_paths,
+                    shared_split_percentage_start=0.,
+                    shared_split_percentage_end=split_percentages[1] / (split_percentages[1] + split_percentages[2]),
+                    label_mapping=label_mapping
+                )
             all_labels = np.concatenate([all_labels, self.val_dataset.labels])
-        if len(split_percentages) > 2 and split_percentages[2] > 0:
-            self.test_dataset = SrsRANLteDataset(
-                read_solitary_npz_paths=read_val_test_npz_paths,
-                read_shared_npz_paths=read_train_val_test_npz_paths,
-                shared_split_percentage_start=split_percentages[0]+split_percentages[1],
-                shared_split_percentage_end=1.,
-                label_mapping=label_mapping
-            )
+        if split_percentages[2] > 0 and (read_train_val_test_npz_paths or read_val_test_npz_paths):
+            if read_train_val_test_npz_paths:
+                self.test_dataset = SrsRANLteDataset(
+                    read_solitary_npz_paths=None,
+                    read_shared_npz_paths=read_train_val_test_npz_paths,
+                    shared_split_percentage_start=split_percentages[0]+split_percentages[1],
+                    shared_split_percentage_end=1.,
+                    label_mapping=label_mapping
+                )
+            elif read_val_test_npz_paths:
+                self.test_dataset = SrsRANLteDataset(
+                    read_solitary_npz_paths=None,
+                    read_shared_npz_paths=read_val_test_npz_paths,
+                    shared_split_percentage_start=split_percentages[1] / (split_percentages[1] + split_percentages[2]),
+                    shared_split_percentage_end=1.,
+                    label_mapping=label_mapping
+                )
             all_labels = np.concatenate([all_labels, self.test_dataset.labels])
         if label_encoder:
             self.label_encoder = label_encoder
@@ -658,7 +678,6 @@ if __name__ == "__main__":
     from sklearn.metrics import accuracy_score
     print(accuracy_score(y_true=dataloaders.val_dataset.y, y_pred=y_val_pred))
 
-    print("END")
     # hybrid_encoder = SrsRANLteHybridEncoder()
     # hybrid_encoder.collect_columns_metadata(data_folder)
     # hybrid_encoder.load_columns_metadata("data/srsRAN/srsenb0219/columns_metadata.json")

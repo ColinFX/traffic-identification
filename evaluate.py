@@ -20,7 +20,7 @@ import utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data/srsRAN/srsenb0219")
-parser.add_argument("--experiment_dir", default="experiments/trial-49")  # hyper-parameter json file
+parser.add_argument("--experiment_dir", default="experiments/trial-51")  # hyper-parameter json file
 parser.add_argument("--restore_file", default="best")  # "best" or "last", models weights checkpoint
 
 

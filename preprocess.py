@@ -400,7 +400,7 @@ class SrsRANLteLogFile:
         self._filter_phy_drb_records()
         self._add_record_periods()
         self.valid_duration: datetime.timedelta = self._trim_head_tail(delta_begin, delta_end)
-        self.samples: List[SrsRANLteSample] = self._regroup_records(window_size)
+        self.samples: List[SrsRANLteSample] = self.regroup_records(window_size)
         self.filter_samples(tbs_threshold)
 
     @staticmethod
@@ -449,7 +449,7 @@ class SrsRANLteLogFile:
         self.records = trimmed_records
         return end_datetime - beginning_datetime - delta_head - delta_tail
 
-    def _regroup_records(self, window_size: int) -> List[SrsRANLteSample]:
+    def regroup_records(self, window_size: int) -> List[SrsRANLteSample]:
         samples: List[SrsRANLteSample] = []
         current_period = -1
         current_frame_cycle = -1

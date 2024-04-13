@@ -1,7 +1,9 @@
 import math
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import torchvision
 
 from models.lstm import LSTMClassifier
 
@@ -43,7 +45,7 @@ class TransformerEncoderClassifier(nn.Module):
     ):
         """
         upstream_model: str, one of ("padding", "linear")
-        downstream_model: str, one of ("linear", "lstm", "pooled-linear")
+        downstream_model: str, one of ("linear", "lstm", "pooled-linear", "mlp")
         """
         super().__init__()
         self.upstream_model = upstream_model
@@ -82,8 +84,17 @@ class TransformerEncoderClassifier(nn.Module):
             self.linear3 = nn.Linear(in_features=target_embedding_len, out_features=target_embedding_len)
             self.activation = nn.Tanh()
             self.linear4 = nn.Linear(in_features=target_embedding_len, out_features=num_classes)
+        elif downstream_model == "mlp":
+            self.mlp = torchvision.ops.MLP(
+                in_channels=target_embedding_len*sequence_length,
+                hidden_channels=(
+                        [4*target_embedding_len*sequence_length for _ in range(3)] +
+                        [target_embedding_len*sequence_length, target_embedding_len, num_classes]
+                ),
+                norm_layer=None
+            )
         else:
-            raise ValueError("downstream model has to be one of ('linear', 'lstm', 'pooled-linear')")
+            raise ValueError("downstream model has to be one of ('linear', 'lstm', 'pooled-linear', 'mlp')")
 
     def forward(self, data_batch: torch.Tensor, return_hidden_states: bool = False):
         # batch_size * sequence_length * raw_embedding_length
@@ -116,6 +127,10 @@ class TransformerEncoderClassifier(nn.Module):
             data_batch = self.linear3(data_batch)
             data_batch = self.activation(data_batch)
             data_batch = self.linear4(data_batch)
+        elif self.downstream_model == "mlp":
+            data_batch = data_batch.reshape(data_batch.shape[0], -1)
+            # batch_size * sequence_length*target_embedding_length
+            data_batch = self.mlp(data_batch)
         # batch_size * num_classes
 
         return data_batch

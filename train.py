@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from dataloader import SrsRANLteDataLoaders
+from dataloader import AwarenessDataLoaders
 from evaluate import evaluate
 from models.cnn import CNNClassifier
 from models.lstm import LSTMClassifier
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     all_paths = utils.listdir_with_suffix(args.data_dir, ".npz")
     train_npz_paths = [path for path in all_paths if "_10" in path and args.zero_shot_keyword not in path]
     val_test_npz_paths = [path for path in all_paths if "_10" in path and args.zero_shot_keyword in path]
-    dataloaders = SrsRANLteDataLoaders(
+    dataloaders = AwarenessDataLoaders(
         params=params,
         split_percentages=[0, 0.75, 0.25],
         read_train_npz_paths=train_npz_paths,

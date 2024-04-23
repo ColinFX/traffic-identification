@@ -11,30 +11,31 @@ classification.
 * Step 1: Preprocess `.log` files and temporarily store them as `.pkl` files under the same folder:
 
 ```python
+import os
 from preprocess import *
 
 for file_path in t := tqdm.tqdm(utils.listdir_with_suffix("./data", ".log")):
     t.set_postfix({"step": "convert_log", "read_path": file_path})
     label = os.path.splitext(os.path.split(file_path)[1])[0]
-    logfile = SrsRANLteLogFile(
+    logfile = SrsranLogFile(
         read_path=file_path,
         label=label,
         window_size=1,
         tbs_threshold=0
     )
-    with open(os.path.join("./data", label+".pkl"), "wb") as file:
+    with open(os.path.join("./data", label + ".pkl"), "wb") as file:
         pickle.dump(logfile, file)
 ```
 
 * Step 2: Embed features of records in log files to numerical vectors: 
 
-* Step 2.1: Count what features each physical channel has and collect datatype metadata of each column: 
+* Step 2.1: Count what features each physical channel has and collect datatype metadata of each column:
 
 ```python
 from dataloader import *
 
 # collect
-hybrid_encoder = SrsRANLteHybridEncoder()
+hybrid_encoder = HybridEncoder()
 pkl_file_paths = utils.listdir_with_suffix("./data", ".pkl")
 hybrid_encoder.collect_columns_metadata(pkl_file_paths)
 # save
@@ -47,7 +48,7 @@ hybrid_encoder.save_columns_metadata("./data/columns_metadata.json")
 from dataloader import *
 
 # load
-hybrid_encoder = SrsRANLteHybridEncoder()
+hybrid_encoder = HybridEncoder()
 hybrid_encoder.load_columns_metadata("./data/columns_metadata.json")
 # fit
 pkl_file_paths = utils.listdir_with_suffix("./data", ".pkl")
@@ -71,7 +72,7 @@ pkl_file_paths = utils.listdir_with_suffix("./data", ".pkl")
 hybrid_encoder.transform(pkl_file_paths)
 ```
 
-* Step 3: Train and evaluate Light Gradient Boosting Machine on this dataset: 
+* Step 3: Train and evaluate Light Gradient Boosting Machine on this dataset:
 
 ```python
 import lightgbm as lgb
@@ -79,9 +80,9 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from dataloader import *
 
 # load
-dataloaders = SrsRANLteDataLoaders(
-    params=utils.HyperParams("experiments/base/params.json"), 
-    split_percentages=[0.7, 0, 0.3], 
+dataloaders = SrsranDataLoaders(
+    params=utils.HyperParams("experiments/base/params.json"),
+    split_percentages=[0.7, 0, 0.3],
     read_train_val_test_npz_paths=utils.listdir_with_suffix("./data", ".npz")
 )
 X_train = dataloaders.train_dataset.X.reshape(dataloaders.train_dataset.X.shape[0], -1)
@@ -94,9 +95,9 @@ model = lgb.LGBMClassifier(random_state=17)
 model.fit(X_train, y_train)
 y_test_pred = model.predict(X_test)
 print(
-    accuracy_score(y_true=y_test, y_pred=y_test_pred), 
-    precision_score(y_true=y_test, y_pred=y_test_pred, average="macro"), 
-    recall_score(y_true=y_test, y_pred=y_test_pred, average="macro"), 
+    accuracy_score(y_true=y_test, y_pred=y_test_pred),
+    precision_score(y_true=y_test, y_pred=y_test_pred, average="macro"),
+    recall_score(y_true=y_test, y_pred=y_test_pred, average="macro"),
     f1_score(y_true=y_test, y_pred=y_test_pred, average="macro")
 )
 ```
@@ -110,7 +111,7 @@ t = tqdm.tqdm(utils.listdir_with_suffix("./data", ".pkl"))
 for file_path in t:
     t.set_postfix({"step": "change_th", "read_path": file_path})
     with open(file_path, "rb") as file:
-        logfile: SrsRANLteLogFile = pickle.load(file)
+        logfile: SrsranLogFile = pickle.load(file)
     logfile.samples = logfile.regroup_records(window_size=2)
     logfile.filter_samples(threshold=10)
     with open(file_path + "_2_10", "wb") as file2:

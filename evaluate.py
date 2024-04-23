@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import trange
 
-from dataloader import AmariNSADataLoaders, SrsRANLteDataLoaders
+from dataloader import AmarisoftDataLoaders, StandardDataLoaders
 from models.cnn import CNNClassifier
 from models.lstm import LSTMClassifier
 from models.transformer import TransformerEncoderClassifier
@@ -113,7 +113,7 @@ if __name__ == "__main__":
             val_test_npz_paths.append(path)
     with open(os.path.join(args.experiment_dir, "label_encoder.pkl"), "rb") as f:
         label_encoder: LabelEncoder = pickle.load(f)
-    dataloaders = SrsRANLteDataLoaders(
+    dataloaders = StandardDataLoaders(
         params=params,
         split_percentages=[0, 0, 1],
         read_val_test_npz_paths=val_test_npz_paths,

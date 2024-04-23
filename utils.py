@@ -305,6 +305,8 @@ def listdir_with_suffix(parent_dir: str, suffix: str):
 
 srsRANLte_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH", "PHICH"]
 
+amariSA_channels: List[str] = ["PUSCH", "PDSCH", "PUCCH", "PDCCH"]
+
 srsRANLte_label_mapping: Dict[str, str] = {}
 for gain in [66, 69, 72, 75, 78, 81, 84]:
     for app in ["bililive", "bilivideo", "netdisk", "tmeetingaudio", "tmeetingvideo", "wget"]:
